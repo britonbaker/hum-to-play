@@ -1,0 +1,960 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}</style>
+</head>
+<body>
+<title>Hum to Play</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one-screen column. Title on top, the violin stage fills the middle, readout and controls docked below. */
+:root {
+  --bg: #12100e;
+  --stage: #191512;
+  --glow: #3b2415;
+  --fg: #f3ece4;
+  --muted: #a69c91;
+  --faint: #6e655c;
+  --line: #2c2520;
+  --amber: #e08b3e;
+  --amber-hi: #f0a25a;
+  --amber-ink: #1f1409;
+  --warn: #f2b48a;
+  --display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --body: "Instrument Sans", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+html { box-sizing: border-box; height: 100%; }
+*, *::before, *::after { box-sizing: inherit; }
+body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--body);
+  -webkit-font-smoothing: antialiased;
+}
+.app {
+  min-height: 100%;
+  max-width: 460px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-block: 18px 14px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+header { text-align: center; display: grid; gap: 4px; }
+h1 {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: clamp(40px, 11vw, 50px);
+  line-height: 1;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+h1 em { color: var(--amber-hi); }
+.sub { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.4; }
+
+.stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 320px;
+  border-radius: 24px;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 70% 55% at 50% 40%, var(--glow), transparent 75%),
+    var(--stage);
+}
+#violin { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+#violin:active { cursor: grabbing; }
+.stage-top {
+  position: absolute; top: 12px; left: 14px; right: 12px;
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  pointer-events: none;
+}
+.tag {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--faint);
+}
+.chip {
+  pointer-events: auto;
+  font: 500 12px/1 var(--body);
+  color: var(--muted);
+  background: rgba(18, 16, 14, 0.6);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 7px 11px;
+  cursor: pointer;
+}
+.chip[aria-pressed="false"] { color: var(--faint); text-decoration: line-through; }
+.trace-wrap { position: absolute; left: 0; right: 0; bottom: 4px; height: 72px; pointer-events: none; }
+#trace { width: 100%; height: 100%; display: block; }
+.nogl {
+  position: absolute; inset: 0; display: grid; place-items: center; padding: 24px;
+  color: var(--muted); text-align: center; font-size: 14px;
+}
+
+.readout {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 14px;
+  padding-inline: 6px;
+}
+.note {
+  font-family: var(--display); font-size: 62px; line-height: 0.9; min-width: 2.1ch; text-align: right;
+  font-variant-numeric: tabular-nums;
+  transition: opacity 0.2s;
+}
+.note.dim { opacity: 0.35; }
+.details { min-width: 0; display: grid; gap: 3px; }
+.l1 { font-size: 16px; font-weight: 600; }
+.l1 .hz { font-family: var(--mono); font-weight: 500; font-variant-numeric: tabular-nums; }
+.l2 { font-size: 14px; color: var(--muted); }
+.l3 { font-size: 12.5px; color: var(--faint); min-height: 1.3em; }
+
+.controls { display: grid; justify-items: center; gap: 12px; }
+.primary {
+  display: inline-flex; align-items: center; gap: 12px;
+  font: 600 17px/1 var(--body);
+  color: var(--amber-ink);
+  background: var(--amber);
+  border: 0; border-radius: 999px;
+  padding: 18px 30px;
+  min-width: 190px; justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 10px 30px -12px rgba(224, 139, 62, 0.6);
+  transition: background 0.15s, transform 0.1s;
+}
+.primary:hover { background: var(--amber-hi); }
+.primary:active { transform: scale(0.98); }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--amber-ink); transition: transform 0.06s linear; }
+.primary.live .dot { background: #b3261e; }
+.secondary { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.ghost {
+  font: 500 14px/1 var(--body);
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+.ghost:hover { border-color: var(--faint); }
+.ghost:disabled { opacity: 0.4; cursor: default; }
+button:focus-visible, label.ghost:focus-within, .chip:focus-visible { outline: 2px solid var(--amber-hi); outline-offset: 3px; }
+.file-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.status { margin: 0; min-height: 1.4em; font-size: 13.5px; color: var(--warn); text-align: center; text-wrap: balance; }
+.foot { margin: 0; font-size: 12.5px; color: var(--faint); text-align: center; }
+
+@media (prefers-reduced-motion: reduce) {
+  .primary, .dot, .note { transition: none; }
+}
+</style>
+
+<div class="app">
+  <header>
+    <h1>Hum to <em>play</em></h1>
+    <p class="sub">Sing or hum and the violin plays it back</p>
+  </header>
+
+  <section class="stage" id="stage" aria-label="3D violin">
+    <canvas id="violin" aria-label="A violin with its bow, animated by your voice"></canvas>
+    <div class="stage-top">
+      <span class="tag">Drag to turn</span>
+      <button class="chip" id="soundBtn" type="button" aria-pressed="true">Sound on</button>
+    </div>
+    <div class="trace-wrap"><canvas id="trace" aria-hidden="true"></canvas></div>
+  </section>
+
+  <div class="readout" aria-live="polite">
+    <div class="note" id="noteName">A4</div>
+    <div class="details">
+      <div class="l1" id="line1"><span class="hz">440 Hz</span> · A string · open</div>
+      <div class="l2" id="line2">Bow resting on the A string</div>
+      <div class="l3" id="line3">Tuning note. Tap below and hum anything.</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="primary" id="micBtn" type="button"><span class="dot" id="dot"></span><span id="micLabel">Tap and hum</span></button>
+    <div class="secondary">
+      <button class="ghost" id="demoBtn" type="button">Play demo tune</button>
+      <label class="ghost" id="fileLabel">Use a voice memo<input class="file-input" id="fileInput" type="file" accept="audio/*"></label>
+    </div>
+    <p class="status" id="status" role="status"></p>
+    <p class="foot">Works best with headphones, mic close</p>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+"use strict";
+const $ = (id) => document.getElementById(id);
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* ------------------------------------------------------------------ */
+/* Violin geometry. 1 unit = 10 cm. Strings run along +y, face is +z.  */
+/* ------------------------------------------------------------------ */
+const NUT_Y = 3.03, BRIDGE_Y = -0.25, SCALE_LEN = NUT_Y - BRIDGE_Y; // 32.8 cm string length
+const NUT_Z = 0.44;
+const BOW_S = 0.88;          // where the bow meets the string, as a fraction from nut to bridge
+const BOW_LEN = 4.4;
+const STRINGS = [
+  { name: "G", open: 55, nutX: -0.08,  brX: -0.17,  brZ: 0.575, r: 0.014, color: 0xc7a26a, tilt: -0.30 },
+  { name: "D", open: 62, nutX: -0.027, brX: -0.057, brZ: 0.635, r: 0.012, color: 0xcdb791, tilt: -0.10 },
+  { name: "A", open: 69, nutX: 0.027,  brX: 0.057,  brZ: 0.635, r: 0.010, color: 0xd9d6cf, tilt: 0.10 },
+  { name: "E", open: 76, nutX: 0.08,   brX: 0.17,   brZ: 0.575, r: 0.008, color: 0xeceae6, tilt: 0.30 },
+];
+function stringPoint(i, s, out) {
+  const S = STRINGS[i];
+  return (out || new THREE.Vector3()).set(lerp(S.nutX, S.brX, s), NUT_Y - s * SCALE_LEN, lerp(NUT_Z, S.brZ, s));
+}
+// distance from the nut for a note n semitones above the open string, as a fraction of string length
+const stopFraction = (n) => 1 - Math.pow(2, -clamp(n, 0, 26) / 12);
+
+/* ------------------------------------------------------------------ */
+/* Three.js scene                                                       */
+/* ------------------------------------------------------------------ */
+const stage = $("stage"), canvas = $("violin");
+const hasThree = !!window.THREE;
+let renderer = null;
+try {
+  if (hasThree) renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: "high-performance" });
+} catch (e) {
+  renderer = null;
+}
+let scene, camera, violin, bow, bowParts = {}, fingerDot, fingerGlow, stringMeshes = [], ribbons = [];
+
+if (renderer && window.THREE) {
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
+
+  scene.add(new THREE.HemisphereLight(0xffe2c4, 0x1a0e08, 0.75));
+  const key = new THREE.DirectionalLight(0xfff0de, 1.25); key.position.set(-3, 5, 6); scene.add(key);
+  const rim = new THREE.DirectionalLight(0xff9a4a, 0.9); rim.position.set(4, 2, -4); scene.add(rim);
+  const fill = new THREE.PointLight(0xffb070, 0.5, 12); fill.position.set(2, -1, 4); scene.add(fill);
+
+  violin = new THREE.Group();
+  scene.add(violin);
+  buildViolin();
+  buildBow();
+} else {
+  const msg = document.createElement("div");
+  msg.className = "nogl";
+  msg.textContent = "This browser can't draw the 3D violin. The pitch readout and sound still work.";
+  stage.appendChild(msg);
+}
+
+function woodTexture(outline) {
+  const W = 512, H = 860, X0 = -1.1, X1 = 1.1, Y0 = -1.86, Y1 = 1.86;
+  const c = document.createElement("canvas"); c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  const px = (x) => ((x - X0) / (X1 - X0)) * W;
+  const py = (y) => ((Y1 - y) / (Y1 - Y0)) * H;
+  // varnish "burst": golden centre, darker edges
+  const grad = g.createRadialGradient(px(0), py(-0.2), 40, px(0), py(-0.1), 470);
+  grad.addColorStop(0, "#c27330");
+  grad.addColorStop(0.55, "#9a4f1f");
+  grad.addColorStop(1, "#4d220d");
+  g.fillStyle = grad; g.fillRect(0, 0, W, H);
+  // straight spruce grain, wider near the edges
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let x = 0; x < W; x += 2 + rnd() * 5) {
+    g.strokeStyle = `rgba(40, 16, 4, ${0.06 + rnd() * 0.12})`;
+    g.lineWidth = 0.6 + rnd() * 1.4;
+    g.beginPath();
+    const wob = rnd() * 3;
+    g.moveTo(x, 0);
+    g.bezierCurveTo(x + wob, H * 0.33, x - wob, H * 0.66, x + wob * 0.5, H);
+    g.stroke();
+  }
+  // purfling: a dark-light-dark inlay just inside the edge
+  const inset = (s) => {
+    g.beginPath();
+    outline.forEach((p, i) => (i ? g.lineTo : g.moveTo).call(g, px(p.x * s), py(p.y * (s + (1 - s) * 0.4))));
+    g.closePath();
+  };
+  g.lineWidth = 5; g.strokeStyle = "rgba(25, 10, 3, 0.7)"; inset(0.955); g.stroke();
+  g.lineWidth = 1.4; g.strokeStyle = "rgba(230, 190, 140, 0.35)"; inset(0.955); g.stroke();
+  // f-holes
+  g.fillStyle = "#170a04"; g.strokeStyle = "#170a04"; g.lineCap = "round";
+  [-1, 1].forEach((side) => {
+    const x = side * 0.40;
+    g.lineWidth = 0.032 * (W / 2.2);
+    g.beginPath();
+    g.moveTo(px(x + side * 0.05), py(0.26));
+    g.bezierCurveTo(px(x - side * 0.06), py(0.05), px(x + side * 0.07), py(-0.28), px(x - side * 0.04), py(-0.5));
+    g.stroke();
+    g.beginPath(); g.arc(px(x + side * 0.06), py(0.29), 0.042 * (W / 2.2), 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(px(x - side * 0.055), py(-0.53), 0.05 * (W / 2.2), 0, Math.PI * 2); g.fill();
+    g.lineWidth = 2.5;
+    g.beginPath(); g.moveTo(px(x - 0.035), py(-0.13)); g.lineTo(px(x + 0.035), py(-0.13)); g.stroke();
+  });
+  const tex = new THREE.CanvasTexture(c);
+  tex.encoding = THREE.sRGBEncoding;
+  tex.anisotropy = 4;
+  tex.repeat.set(1 / (X1 - X0), 1 / (Y1 - Y0));
+  tex.offset.set(-X0 / (X1 - X0), -Y0 / (Y1 - Y0));
+  return tex;
+}
+
+function rod(a, b, r, mat, seg) {
+  const dir = new THREE.Vector3().subVectors(b, a);
+  const len = dir.length();
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, seg || 10), mat);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+  m.position.copy(a).add(b).multiplyScalar(0.5);
+  return m;
+}
+
+function buildViolin() {
+  // body outline (right half, bottom to top), mirrored
+  const half = [[0,-1.78],[0.55,-1.7],[0.92,-1.38],[1.04,-0.88],[0.99,-0.47],[0.85,-0.24],[0.62,-0.15],[0.53,0.06],
+                [0.61,0.29],[0.77,0.39],[0.87,0.72],[0.85,1.15],[0.67,1.55],[0.36,1.74],[0,1.79]];
+  const right = new THREE.SplineCurve(half.map((p) => new THREE.Vector2(p[0], p[1]))).getSpacedPoints(110);
+  const left = right.slice(1, -1).reverse().map((v) => new THREE.Vector2(-v.x, v.y));
+  const outline = right.concat(left);
+  const bodyGeo = new THREE.ExtrudeGeometry(new THREE.Shape(outline), {
+    depth: 0.3, bevelEnabled: true, bevelThickness: 0.07, bevelSize: 0.05, bevelSegments: 4, curveSegments: 1, steps: 1,
+  });
+  bodyGeo.translate(0, 0, -0.15);
+  const top = new THREE.MeshStandardMaterial({ map: woodTexture(outline), roughness: 0.38, metalness: 0.05 });
+  const ribs = new THREE.MeshStandardMaterial({ color: 0x5e2c11, roughness: 0.45, metalness: 0.05 });
+  violin.add(new THREE.Mesh(bodyGeo, [top, ribs]));
+
+  const maple = new THREE.MeshStandardMaterial({ color: 0x5a2a12, roughness: 0.45 });
+  const ebony = new THREE.MeshStandardMaterial({ color: 0x070605, roughness: 0.5, metalness: 0.05 });
+  const bone = new THREE.MeshStandardMaterial({ color: 0xe6d6b8, roughness: 0.5 });
+
+  // neck, pegbox, scroll
+  const neck = new THREE.Mesh(new THREE.BoxGeometry(0.22, 1.35, 0.37), maple);
+  neck.position.set(0, 2.37, 0.135); violin.add(neck);
+  const pegbox = new THREE.Mesh(new THREE.BoxGeometry(0.21, 0.66, 0.3), maple);
+  pegbox.position.set(0, 3.35, 0.14); violin.add(pegbox);
+  const scroll = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.065, 12, 28), maple);
+  scroll.rotation.y = Math.PI / 2; scroll.position.set(0, 3.79, 0.14); violin.add(scroll);
+  const scrollEye = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.2, 16), maple);
+  scrollEye.rotation.z = Math.PI / 2; scrollEye.position.copy(scroll.position); violin.add(scrollEye);
+  [3.13, 3.25, 3.37, 3.49].forEach((y, i) => {
+    const side = i % 2 ? 1 : -1;
+    const peg = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.022, 0.42, 10), ebony);
+    peg.rotation.z = Math.PI / 2; peg.position.set(side * 0.16, y, 0.15); violin.add(peg);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.07, 14, 10), ebony);
+    head.scale.set(0.35, 1, 0.9); head.position.set(side * 0.39, y, 0.15); violin.add(head);
+  });
+
+  // fingerboard: tapered, rising toward the body
+  const fbLen = 2.68;
+  const fbShape = new THREE.Shape([
+    new THREE.Vector2(-0.125, 0), new THREE.Vector2(-0.215, -fbLen),
+    new THREE.Vector2(0.215, -fbLen), new THREE.Vector2(0.125, 0),
+  ]);
+  const fbGeo = new THREE.ExtrudeGeometry(fbShape, { depth: 0.08, bevelEnabled: true, bevelThickness: 0.01, bevelSize: 0.01, bevelSegments: 2 });
+  fbGeo.rotateX(-0.0485);
+  const fb = new THREE.Mesh(fbGeo, ebony);
+  fb.position.set(0, NUT_Y, 0.31); violin.add(fb);
+  const nut = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.035, 0.05), ebony);
+  nut.position.set(0, NUT_Y + 0.015, 0.42); violin.add(nut);
+
+  // bridge: arched maple, standing on the top
+  const br = new THREE.Shape([
+    new THREE.Vector2(-0.22, 0), new THREE.Vector2(-0.13, 0), new THREE.Vector2(-0.12, 0.06), new THREE.Vector2(0.12, 0.06),
+    new THREE.Vector2(0.13, 0), new THREE.Vector2(0.22, 0), new THREE.Vector2(0.2, 0.3), new THREE.Vector2(0.12, 0.395),
+    new THREE.Vector2(0, 0.42), new THREE.Vector2(-0.12, 0.395), new THREE.Vector2(-0.2, 0.3),
+  ]);
+  const heart = new THREE.Path(); heart.absarc(0, 0.22, 0.035, 0, Math.PI * 2, true); br.holes.push(heart);
+  const brGeo = new THREE.ExtrudeGeometry(br, { depth: 0.03, bevelEnabled: false });
+  brGeo.rotateX(Math.PI / 2);
+  const bridge = new THREE.Mesh(brGeo, new THREE.MeshStandardMaterial({ color: 0xdcbc8a, roughness: 0.6 }));
+  bridge.position.set(0, BRIDGE_Y + 0.015, 0.2); violin.add(bridge);
+
+  // tailpiece and end button
+  const tp = new THREE.Shape([
+    new THREE.Vector2(-0.2, 0), new THREE.Vector2(-0.09, -1.0), new THREE.Vector2(0.09, -1.0), new THREE.Vector2(0.2, 0),
+  ]);
+  const tpGeo = new THREE.ExtrudeGeometry(tp, { depth: 0.05, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.02, bevelSegments: 2 });
+  const tail = new THREE.Mesh(tpGeo, ebony); tail.position.set(0, -0.62, 0.3); violin.add(tail);
+  const endBtn = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.1, 14), ebony);
+  endBtn.position.set(0, -1.86, 0); violin.add(endBtn);
+  const chin = new THREE.Mesh(new THREE.SphereGeometry(0.42, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), ebony);
+  chin.scale.set(1, 0.6, 0.25); chin.rotation.x = Math.PI / 2; chin.position.set(-0.45, -1.42, 0.24); violin.add(chin);
+
+  // strings
+  STRINGS.forEach((S, i) => {
+    const mat = new THREE.MeshStandardMaterial({ color: S.color, roughness: 0.35, metalness: 0.55, emissive: 0xff8a2a, emissiveIntensity: 0 });
+    const a = stringPoint(i, 0), b = stringPoint(i, 1);
+    const playing = rod(a, b, S.r, mat, 8);
+    violin.add(playing);
+    violin.add(rod(b, new THREE.Vector3(S.brX * 0.55, -0.66, 0.4), S.r, mat, 8));
+    violin.add(rod(new THREE.Vector3(S.nutX * 1.4, NUT_Y + 0.3, 0.3), a, S.r, mat, 8));
+    stringMeshes.push(mat);
+  });
+
+  // vibration ribbons for the sounding string
+  for (let k = 0; k < 2; k++) {
+    const N = 48;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array((N + 1) * 2 * 3), 3));
+    const idx = [];
+    for (let j = 0; j < N; j++) { const a = j * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    geo.setIndex(idx);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffa04a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false; mesh.userData.N = N;
+    violin.add(mesh); ribbons.push(mesh);
+  }
+
+  // finger marker
+  fingerDot = new THREE.Mesh(new THREE.SphereGeometry(0.038, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffb066 }));
+  violin.add(fingerDot);
+  const gc = document.createElement("canvas"); gc.width = gc.height = 128;
+  const gg = gc.getContext("2d");
+  const rg = gg.createRadialGradient(64, 64, 0, 64, 64, 64);
+  rg.addColorStop(0, "rgba(255,180,100,0.9)"); rg.addColorStop(0.35, "rgba(255,140,60,0.35)"); rg.addColorStop(1, "rgba(255,120,40,0)");
+  gg.fillStyle = rg; gg.fillRect(0, 0, 128, 128);
+  fingerGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(gc), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+  fingerGlow.scale.set(0.4, 0.4, 1);
+  violin.add(fingerGlow);
+}
+
+function buildBow() {
+  bow = new THREE.Group();
+  const hair = new THREE.Mesh(new THREE.BoxGeometry(BOW_LEN, 0.075, 0.012), new THREE.MeshStandardMaterial({ color: 0xf1e7d2, roughness: 0.8 }));
+  hair.position.set(BOW_LEN / 2, 0, 0.006); bow.add(hair);
+  const stickCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-0.2, 0, 0.2), new THREE.Vector3(BOW_LEN * 0.5, 0, 0.1), new THREE.Vector3(BOW_LEN + 0.02, 0, 0.15),
+  ]);
+  const stick = new THREE.Mesh(new THREE.TubeGeometry(stickCurve, 60, 0.022, 8), new THREE.MeshStandardMaterial({ color: 0x5c2a14, roughness: 0.4 }));
+  bow.add(stick);
+  const ebony = new THREE.MeshStandardMaterial({ color: 0x141110, roughness: 0.35 });
+  const frog = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.1, 0.19), ebony); frog.position.set(0.12, 0, 0.1); bow.add(frog);
+  const eye = new THREE.Mesh(new THREE.CircleGeometry(0.025, 16), new THREE.MeshStandardMaterial({ color: 0xe8e2ff, roughness: 0.2, metalness: 0.3 }));
+  eye.position.set(0.12, 0.051, 0.1); eye.rotation.x = -Math.PI / 2; bow.add(eye);
+  const button = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.2, 12), new THREE.MeshStandardMaterial({ color: 0xc9c2b4, roughness: 0.3, metalness: 0.8 }));
+  button.rotation.z = Math.PI / 2; button.position.set(-0.3, 0, 0.2); bow.add(button);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.06, 0.17), new THREE.MeshStandardMaterial({ color: 0xe9dcc3, roughness: 0.5 }));
+  head.position.set(BOW_LEN + 0.02, 0, 0.08); bow.add(head);
+  violin.add(bow);
+}
+
+/* framing */
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  if (!renderer || !w || !h) return;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  const d = Math.max(3.4 / t, 1.7 / (t * camera.aspect)) + 1.2;
+  camera.position.set(0, 0.55, d);
+  camera.lookAt(0, 0.95, 0);
+  camera.updateProjectionMatrix();
+  sizeTrace();
+}
+
+/* drag to turn */
+let userY = 0, userX = 0, drag = null;
+canvas.addEventListener("pointerdown", (e) => { drag = { x: e.clientX, y: e.clientY, uy: userY, ux: userX }; canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  userY = clamp(drag.uy + (e.clientX - drag.x) * 0.008, -1.4, 1.4);
+  userX = clamp(drag.ux + (e.clientY - drag.y) * 0.005, -0.5, 0.5);
+});
+const endDrag = () => { drag = null; };
+canvas.addEventListener("pointerup", endDrag);
+canvas.addEventListener("pointercancel", endDrag);
+canvas.addEventListener("dblclick", () => { userX = 0; userY = 0; });
+
+/* ------------------------------------------------------------------ */
+/* Pitch trace strip                                                    */
+/* ------------------------------------------------------------------ */
+const trace = $("trace"), tctx = trace.getContext("2d");
+const TRACE_N = 240;
+const traceBuf = new Array(TRACE_N).fill(null);
+function sizeTrace() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  trace.width = Math.round(trace.clientWidth * dpr);
+  trace.height = Math.round(trace.clientHeight * dpr);
+}
+function drawTrace() {
+  const W = trace.width, H = trace.height;
+  if (!W || !H) return;
+  const dpr = W / trace.clientWidth;
+  tctx.clearRect(0, 0, W, H);
+  const lo = 53, hi = 86, pad = 6 * dpr, x0 = 22 * dpr;
+  const y = (m) => H - pad - ((m - lo) / (hi - lo)) * (H - pad * 2);
+  tctx.font = `${10 * dpr}px "IBM Plex Mono", monospace`;
+  tctx.textBaseline = "middle";
+  STRINGS.forEach((S, i) => {
+    const yy = Math.round(y(S.open)) + 0.5;
+    tctx.strokeStyle = i === state.string && state.sounding ? "rgba(224,139,62,0.45)" : "rgba(166,156,145,0.16)";
+    tctx.lineWidth = 1;
+    tctx.beginPath(); tctx.moveTo(x0, yy); tctx.lineTo(W - 8 * dpr, yy); tctx.stroke();
+    tctx.fillStyle = i === state.string && state.sounding ? "#e08b3e" : "rgba(166,156,145,0.55)";
+    tctx.fillText(S.name, 8 * dpr, yy);
+  });
+  tctx.strokeStyle = "#f0a25a";
+  tctx.lineWidth = 2 * dpr;
+  tctx.lineJoin = "round";
+  tctx.beginPath();
+  let pen = false;
+  for (let i = 0; i < TRACE_N; i++) {
+    const m = traceBuf[i];
+    const xx = x0 + (i / (TRACE_N - 1)) * (W - x0 - 8 * dpr);
+    if (m == null) { pen = false; continue; }
+    const yy = y(clamp(m, lo, hi));
+    if (!pen) { tctx.moveTo(xx, yy); pen = true; } else tctx.lineTo(xx, yy);
+  }
+  tctx.stroke();
+}
+
+/* ------------------------------------------------------------------ */
+/* Pitch detection (YIN)                                                */
+/* ------------------------------------------------------------------ */
+const YIN_W = 1024;
+let yinD = new Float32Array(1100);
+function yin(buf, sr) {
+  const tauMin = Math.max(2, Math.floor(sr / 1500));
+  const tauMax = Math.min(Math.floor(sr / 62), buf.length - YIN_W - 2);
+  if (yinD.length < tauMax + 2) yinD = new Float32Array(tauMax + 2);
+  const d = yinD;
+  d[0] = 1;
+  let running = 0;
+  for (let tau = 1; tau <= tauMax; tau++) {
+    let sum = 0;
+    for (let i = 0; i < YIN_W; i++) { const v = buf[i] - buf[i + tau]; sum += v * v; }
+    running += sum;
+    d[tau] = running > 0 ? (sum * tau) / running : 1;
+  }
+  let tau = -1;
+  for (let t = tauMin; t < tauMax; t++) {
+    if (d[t] < 0.15) {
+      while (t + 1 < tauMax && d[t + 1] < d[t]) t++;
+      tau = t; break;
+    }
+  }
+  if (tau < 0) {
+    let best = tauMin;
+    for (let t = tauMin; t < tauMax; t++) if (d[t] < d[best]) best = t;
+    if (d[best] > 0.3) return null;
+    tau = best;
+  }
+  const a = d[tau - 1], b = d[tau], c = d[tau + 1] !== undefined ? d[tau + 1] : b;
+  const den = a + c - 2 * b;
+  const shift = den ? (a - c) / (2 * den) : 0;
+  return { freq: sr / (tau + clamp(shift, -1, 1)), clarity: 1 - b };
+}
+
+/* ------------------------------------------------------------------ */
+/* Violin voice: two detuned saws through a body-resonance filter bank */
+/* ------------------------------------------------------------------ */
+let soundOn = true;
+function makeSynth(ctx) {
+  const master = ctx.createGain(); master.gain.value = soundOn ? 0.75 : 0; master.connect(ctx.destination);
+  const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -18; comp.ratio.value = 3; comp.connect(master);
+  const dry = ctx.createGain(); dry.gain.value = 0.85; dry.connect(comp);
+  const verb = ctx.createConvolver();
+  const len = Math.floor(ctx.sampleRate * 2.2), ir = ctx.createBuffer(2, len, ctx.sampleRate);
+  for (let ch = 0; ch < 2; ch++) { const dd = ir.getChannelData(ch); for (let i = 0; i < len; i++) dd[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2); }
+  verb.buffer = ir;
+  const wet = ctx.createGain(); wet.gain.value = 0.26; verb.connect(wet); wet.connect(comp);
+  const amp = ctx.createGain(); amp.gain.value = 0; amp.connect(dry); amp.connect(verb);
+
+  const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 160; hp.Q.value = 0.7;
+  const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 3000; lp.Q.value = 0.8;
+  const b1 = ctx.createBiquadFilter(); b1.type = "peaking"; b1.frequency.value = 470; b1.Q.value = 1.3; b1.gain.value = 5;
+  const b2 = ctx.createBiquadFilter(); b2.type = "peaking"; b2.frequency.value = 2900; b2.Q.value = 1.1; b2.gain.value = 6;
+  const shelf = ctx.createBiquadFilter(); shelf.type = "highshelf"; shelf.frequency.value = 5200; shelf.gain.value = -10;
+  hp.connect(lp); lp.connect(b1); b1.connect(b2); b2.connect(shelf); shelf.connect(amp);
+
+  const mix = ctx.createGain(); mix.gain.value = 0.3; mix.connect(hp);
+  const o1 = ctx.createOscillator(); o1.type = "sawtooth"; o1.frequency.value = 440;
+  const o2 = ctx.createOscillator(); o2.type = "sawtooth"; o2.frequency.value = 440; o2.detune.value = 6;
+  o1.connect(mix); o2.connect(mix);
+  const lfo = ctx.createOscillator(); lfo.frequency.value = 5.6;
+  const vib = ctx.createGain(); vib.gain.value = 0;
+  lfo.connect(vib); vib.connect(o1.detune); vib.connect(o2.detune);
+
+  const nb = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+  const nd = nb.getChannelData(0); for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+  const noise = ctx.createBufferSource(); noise.buffer = nb; noise.loop = true;
+  const nbp = ctx.createBiquadFilter(); nbp.type = "bandpass"; nbp.frequency.value = 2500; nbp.Q.value = 0.8;
+  const ng = ctx.createGain(); ng.gain.value = 0;
+  noise.connect(nbp); nbp.connect(ng); ng.connect(lp);
+
+  o1.start(); o2.start(); lfo.start(); noise.start();
+  return {
+    play(freq, level, onset, steady) {
+      const t = ctx.currentTime;
+      o1.frequency.setTargetAtTime(freq, t, onset ? 0.01 : 0.03);
+      o2.frequency.setTargetAtTime(freq, t, onset ? 0.01 : 0.03);
+      amp.gain.setTargetAtTime(0.18 + 0.62 * level, t, onset ? 0.015 : 0.04);
+      lp.frequency.setTargetAtTime(1500 + 5200 * level, t, 0.05);
+      nbp.frequency.setTargetAtTime(clamp(freq * 4, 800, 7000), t, 0.05);
+      if (onset) { ng.gain.setValueAtTime(0.22, t); ng.gain.setTargetAtTime(0.025 + 0.05 * level, t + 0.012, 0.03); }
+      else ng.gain.setTargetAtTime(0.025 + 0.05 * level, t, 0.05);
+      vib.gain.setTargetAtTime(steady > 0.28 ? 13 : 0, t, 0.18);
+    },
+    silence() {
+      const t = ctx.currentTime;
+      amp.gain.setTargetAtTime(0, t, 0.06);
+      ng.gain.setTargetAtTime(0, t, 0.03);
+      vib.gain.setTargetAtTime(0, t, 0.05);
+    },
+    mute(on) { master.gain.setTargetAtTime(on ? 0.75 : 0, ctx.currentTime, 0.03); },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Audio sources: mic, demo hum, voice memo                            */
+/* ------------------------------------------------------------------ */
+let ctx = null, analyser = null, timeBuf = null, synth = null, sink = null;
+let mode = null; // "mic" | "demo" | "file"
+let micStream = null, srcNodes = [], wakeLock = null, endTimer = 0;
+
+function ensureCtx() {
+  if (!ctx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) throw new Error("noaudio");
+    ctx = new AC();
+    analyser = ctx.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0;
+    timeBuf = new Float32Array(analyser.fftSize);
+    sink = ctx.createGain(); sink.gain.value = 0;
+    analyser.connect(sink); sink.connect(ctx.destination);
+    synth = makeSynth(ctx);
+  }
+  if (ctx.state === "suspended") ctx.resume();
+  return ctx;
+}
+
+function setStatus(msg) { $("status").textContent = msg || ""; }
+
+function updateButtons() {
+  const live = !!mode;
+  $("micBtn").classList.toggle("live", live);
+  $("micLabel").textContent = mode === "mic" ? "Stop listening" : live ? "Stop" : "Tap and hum";
+  $("demoBtn").disabled = live;
+  $("fileInput").disabled = live;
+  $("fileLabel").style.opacity = live ? 0.4 : "";
+}
+
+async function startMic() {
+  setStatus("");
+  try { ensureCtx(); } catch (e) { setStatus("This browser can't run Web Audio, so the violin can't listen here."); return; }
+  let embedded = true;
+  try { embedded = window.self !== window.top; } catch (e) { embedded = true; }
+  const viewerMsg = "Claude's page viewer blocks the mic, so it can't ask for access. Tap Play demo tune to see it play.";
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus(embedded ? viewerMsg : "This browser has no mic access here. Try Play demo tune or a voice memo.");
+    return;
+  }
+  $("micLabel").textContent = "Asking for the mic…";
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false },
+    });
+  } catch (e) {
+    updateButtons();
+    const name = e && e.name;
+    if ((name === "NotAllowedError" || name === "SecurityError") && embedded) setStatus(viewerMsg);
+    else if (name === "NotAllowedError" || name === "SecurityError") setStatus("Mic access was blocked. Allow the mic for this page in your browser settings, or tap Play demo tune.");
+    else if (name === "NotFoundError") setStatus("No mic was found. Connect headphones with a mic, or try the demo tune.");
+    else setStatus("The mic couldn't start. Try the demo tune or a voice memo.");
+    return;
+  }
+  const src = ctx.createMediaStreamSource(micStream);
+  src.connect(analyser);
+  srcNodes = [src];
+  begin("mic");
+  setStatus("");
+  try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) { wakeLock = null; }
+}
+
+// Petzold, Minuet in G (public domain), first eight bars. [midi, beats]
+const MINUET = [[74,1],[67,.5],[69,.5],[71,.5],[72,.5],[74,1],[67,1],[67,1],[76,1],[72,.5],[74,.5],[76,.5],[78,.5],
+  [79,1],[67,1],[67,1],[72,1],[74,.5],[72,.5],[71,.5],[69,.5],[71,1],[72,.5],[71,.5],[69,.5],[67,.5],
+  [66,1],[67,.5],[69,.5],[71,.5],[67,.5],[69,3]];
+function startDemo() {
+  setStatus("");
+  try { ensureCtx(); } catch (e) { setStatus("This browser can't run Web Audio, so the demo can't play here."); return; }
+  const beat = 0.46;
+  const t0 = ctx.currentTime + 0.25;
+  const voice = ctx.createGain(); voice.gain.value = 0;
+  const o = ctx.createOscillator(); o.type = "sine";
+  const h2 = ctx.createOscillator(); h2.type = "sine";
+  const h2g = ctx.createGain(); h2g.gain.value = 0.28;
+  const lfo = ctx.createOscillator(); lfo.frequency.value = 5.2;
+  const lfoG = ctx.createGain(); lfoG.gain.value = 9;
+  lfo.connect(lfoG); lfoG.connect(o.detune); lfoG.connect(h2.detune);
+  o.connect(voice); h2.connect(h2g); h2g.connect(voice);
+  voice.connect(analyser);
+  let t = t0;
+  MINUET.forEach(([m, b]) => {
+    const f = 440 * Math.pow(2, (m - 69) / 12), dur = b * beat;
+    o.frequency.setValueAtTime(f, t); h2.frequency.setValueAtTime(f * 2, t);
+    voice.gain.setValueAtTime(0, t);
+    voice.gain.linearRampToValueAtTime(0.32, t + 0.12);
+    voice.gain.setValueAtTime(0.3, t + dur - 0.07);
+    voice.gain.linearRampToValueAtTime(0, t + dur - 0.02);
+    t += dur;
+  });
+  [o, h2, lfo].forEach((n) => { n.start(t0); n.stop(t + 0.1); });
+  srcNodes = [voice, o, h2, lfo];
+  begin("demo");
+  $("line3").textContent = "Demo voice: Minuet in G, hummed";
+  clearTimeout(endTimer);
+  endTimer = setTimeout(() => { if (mode === "demo") stop(); }, (t - ctx.currentTime + 0.5) * 1000);
+}
+
+$("fileLabel").addEventListener("pointerdown", () => { try { ensureCtx(); } catch (e) {} });
+$("fileInput").addEventListener("change", async (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  setStatus("");
+  try { ensureCtx(); } catch (err) { setStatus("This browser can't run Web Audio, so it can't read voice memos."); return; }
+  try {
+    const data = await file.arrayBuffer();
+    const audio = await new Promise((res, rej) => {
+      const p = ctx.decodeAudioData(data, res, rej);
+      if (p && p.then) p.then(res, rej);
+    });
+    if (mode) stop();
+    const src = ctx.createBufferSource(); src.buffer = audio;
+    src.connect(analyser);
+    src.onended = () => { if (mode === "file") stop(); };
+    src.start();
+    srcNodes = [src];
+    begin("file");
+    $("line3").textContent = `Playing from ${file.name.length > 34 ? file.name.slice(0, 31) + "…" : file.name}`;
+  } catch (err) {
+    setStatus("That file couldn't be read as audio. Try an m4a, mp3 or wav voice memo.");
+  }
+});
+
+function begin(m) {
+  mode = m;
+  state.sounding = false; state.held = null; state.hist.length = 0; state.silentFrames = 99; state.noise = 0.004;
+  updateButtons();
+}
+
+function stop() {
+  clearTimeout(endTimer);
+  srcNodes.forEach((n) => { try { n.stop && n.stop(); } catch (e) {} try { n.disconnect(); } catch (e) {} });
+  srcNodes = [];
+  if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  if (synth) synth.silence();
+  mode = null;
+  state.sounding = false;
+  updateButtons();
+  $("line2").textContent = "Bow resting. Tap to play again.";
+  $("noteName").classList.remove("dim");
+}
+
+$("micBtn").addEventListener("click", () => { if (mode) stop(); else startMic(); });
+$("demoBtn").addEventListener("click", () => { if (!mode) startDemo(); });
+$("soundBtn").addEventListener("click", () => {
+  soundOn = !soundOn;
+  $("soundBtn").setAttribute("aria-pressed", String(soundOn));
+  $("soundBtn").textContent = soundOn ? "Sound on" : "Sound off";
+  if (synth) synth.mute(soundOn);
+});
+document.addEventListener("visibilitychange", () => { if (document.hidden && mode === "mic") stop(); });
+
+/* ------------------------------------------------------------------ */
+/* Voice → violin state                                                 */
+/* ------------------------------------------------------------------ */
+const NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+const noteName = (m) => NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
+const fingerLabel = (n) => n <= 0 ? "open" : n <= 2 ? "1st finger" : n <= 4 ? "2nd finger" : n === 5 ? "3rd finger" : n <= 7 ? "4th finger" : "shifted up";
+
+const state = {
+  sounding: false, held: null, change: 0, hist: [], midi: 69, shift: 0,
+  string: 2, level: 0, steady: 0, silentFrames: 99, noise: 0.004, lastUi: 0,
+  bowP: 0.5, bowDir: 1,
+};
+
+function chooseString(m, cur) {
+  if (cur != null) { const n = m - STRINGS[cur].open; if (n >= 0 && n <= 7) return cur; }
+  let s = 0;
+  for (let i = 0; i < 4; i++) if (STRINGS[i].open <= m) s = i;
+  return s;
+}
+
+function analyse(dt) {
+  analyser.getFloatTimeDomainData(timeBuf);
+  let sum = 0;
+  for (let i = 0; i < timeBuf.length; i++) sum += timeBuf[i] * timeBuf[i];
+  const rms = Math.sqrt(sum / timeBuf.length);
+  if (mode === "mic") {
+    if (rms < state.noise * 1.5) state.noise = state.noise * 0.95 + rms * 0.05;
+    else state.noise *= 1.0008;
+    state.noise = clamp(state.noise, 0.0008, 0.05);
+  }
+  const gate = mode === "mic" ? Math.max(0.004, state.noise * 2.4) : 0.01;
+  let midi = null;
+  if (rms > gate) {
+    const r = yin(timeBuf, ctx.sampleRate);
+    if (r && r.freq > 62 && r.freq < 1500) midi = 69 + 12 * Math.log2(r.freq / 440);
+  }
+  let onset = false;
+  if (midi == null) {
+    state.silentFrames++;
+    if (state.sounding && state.silentFrames > 3) {
+      state.sounding = false;
+      synth.silence();
+      $("line2").textContent = "Bow lifted, waiting for your voice";
+      $("noteName").classList.add("dim");
+    }
+    traceBuf.push(null); traceBuf.shift();
+    return;
+  }
+  state.silentFrames = 0;
+  state.hist.push(midi); if (state.hist.length > 5) state.hist.shift();
+  const med = state.hist.slice().sort((a, b) => a - b)[state.hist.length >> 1];
+  if (!state.sounding) {
+    // octave shift is set at each new phrase so a held note never jumps octaves
+    let sh = 0; while (med + sh < 55) sh += 12; while (med + sh > 100) sh -= 12;
+    state.shift = sh;
+  }
+  const played = med + state.shift;
+  const cand = Math.round(played);
+  if (!state.sounding) {
+    onset = true; state.sounding = true; state.held = cand; state.midi = played; state.change = 0;
+  } else if (cand !== state.held) {
+    if (++state.change >= 3) { state.held = cand; state.change = 0; onset = true; }
+  } else state.change = 0;
+  state.midi += (played - state.midi) * (onset ? 1 : 0.35);
+  const lvl = clamp((20 * Math.log10(rms / gate) - 2) / 28, 0, 1);
+  state.level += (lvl - state.level) * 0.3;
+  if (onset) {
+    state.string = chooseString(state.held, state.string);
+    state.bowDir = -state.bowDir;
+    state.steady = 0;
+    $("noteName").classList.remove("dim");
+  } else state.steady += dt;
+  synth.play(440 * Math.pow(2, (state.midi - 69) / 12), state.level, onset, state.steady);
+  traceBuf.push(state.midi); traceBuf.shift();
+  const now = performance.now();
+  if (onset || now - state.lastUi > 120) { state.lastUi = now; renderReadout(); }
+}
+
+function renderReadout() {
+  const S = STRINGS[state.string];
+  const n = state.held - S.open;
+  const hz = Math.round(440 * Math.pow(2, (state.midi - 69) / 12));
+  $("noteName").textContent = noteName(state.held);
+  $("line1").innerHTML = `<span class="hz">${hz} Hz</span> · ${S.name} string · ${fingerLabel(n)}`;
+  const pressure = state.level < 0.33 ? "light" : state.level < 0.66 ? "medium" : "heavy";
+  $("line2").textContent = `Bow ${state.bowDir > 0 ? "down" : "up"}, ${pressure} pressure`;
+  if (mode === "mic") {
+    const oct = state.shift / 12;
+    $("line3").textContent = oct > 0 ? `You sang ${noteName(state.held - state.shift)}, played ${oct === 1 ? "an octave" : oct + " octaves"} up` : oct < 0 ? `You sang ${noteName(state.held - state.shift)}, played lower to fit` : "Playing at your pitch";
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Animation                                                            */
+/* ------------------------------------------------------------------ */
+const V3 = (x, y, z) => (hasThree ? new THREE.Vector3(x, y, z) : null);
+const tmpA = V3(), tmpB = V3(), tmpC = V3(), fingerPos = V3(), contact = V3(), bowX = V3();
+const axisY = V3(0, 1, 0), axisZ = V3(0, 0, 1);
+const qY = hasThree ? new THREE.Quaternion() : null, qZ = hasThree ? new THREE.Quaternion() : null;
+let tilt = STRINGS[2].tilt, lift = 0, vis = 0, contactS = 2, last = performance.now(), clock = 0;
+if (hasThree) stringPoint(2, 0, fingerPos);
+
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now; clock += dt;
+  if (mode && ctx && analyser) analyse(dt);
+  else if (!mode) { traceBuf.push(null); traceBuf.shift(); }
+
+  const sounding = !!mode && state.sounding;
+  vis += ((sounding ? 0.35 + 0.65 * state.level : 0) - vis) * (sounding ? 0.25 : 0.12);
+
+  // primary button dot pulses with your level
+  $("dot").style.transform = `scale(${1 + (mode ? vis * 0.9 : 0)})`;
+
+  if (renderer) {
+    const si = state.string;
+    // finger
+    const n = state.held != null ? state.midi - STRINGS[si].open : 0;
+    const s = stopFraction(n);
+    stringPoint(si, s, tmpA);
+    fingerPos.lerp(tmpA, 0.3);
+    fingerDot.position.copy(fingerPos).z += 0.02;
+    fingerGlow.position.copy(fingerDot.position);
+    const showFinger = sounding && n > 0.5;
+    fingerDot.visible = showFinger;
+    fingerGlow.material.opacity = showFinger ? 0.55 + vis * 0.45 : 0;
+
+    // string glow and vibration between finger and bridge
+    stringMeshes.forEach((m, i) => { m.emissiveIntensity += ((i === si ? vis * 0.9 : 0) - m.emissiveIntensity) * 0.2; });
+    stringPoint(si, 1, tmpB);
+    ribbons.forEach((rb, k) => {
+      const N = rb.userData.N, pos = rb.geometry.attributes.position.array;
+      const amp = vis * 0.03, phase = Math.sin(clock * 58 + k * Math.PI);
+      for (let j = 0; j <= N; j++) {
+        const t = j / N;
+        tmpC.lerpVectors(fingerPos, tmpB, t);
+        const off = Math.sin(Math.PI * t) * amp * phase;
+        const w = 0.006 + vis * 0.006;
+        pos[j * 6] = tmpC.x + off - w; pos[j * 6 + 1] = tmpC.y; pos[j * 6 + 2] = tmpC.z + 0.004;
+        pos[j * 6 + 3] = tmpC.x + off + w; pos[j * 6 + 4] = tmpC.y; pos[j * 6 + 5] = tmpC.z + 0.004;
+      }
+      rb.geometry.attributes.position.needsUpdate = true;
+      rb.material.opacity = vis * (k ? 0.45 : 0.75);
+    });
+
+    // bow: travels with loudness, flips at each new note or when it runs out
+    if (sounding) {
+      state.bowP += state.bowDir * (0.22 + 0.85 * state.level) * dt;
+      if (state.bowP > 0.92) { state.bowP = 0.92; state.bowDir = -1; }
+      if (state.bowP < 0.08) { state.bowP = 0.08; state.bowDir = 1; }
+    } else if (!mode) {
+      state.bowP += (0.5 - state.bowP) * 0.02;
+    }
+    tilt += (STRINGS[si].tilt - tilt) * 0.18;
+    contactS += (si - contactS) * 0.18;
+    const liftTarget = sounding ? 0 : mode ? 0.14 : 0.02 + (reduceMotion ? 0 : Math.sin(clock * 1.2) * 0.015);
+    lift += (liftTarget - lift) * 0.15;
+    // contact point between the two nearest strings while crossing
+    const i0 = Math.floor(contactS), i1 = Math.min(3, i0 + 1), f = contactS - i0;
+    stringPoint(i0, BOW_S, tmpA); stringPoint(i1, BOW_S, tmpB);
+    contact.lerpVectors(tmpA, tmpB, f);
+    contact.z += 0.013 + lift;
+    qY.setFromAxisAngle(axisY, tilt);
+    qZ.setFromAxisAngle(axisZ, -0.1);
+    bow.quaternion.copy(qY).multiply(qZ);
+    bowX.set(1, 0, 0).applyQuaternion(bow.quaternion);
+    bow.position.copy(contact).addScaledVector(bowX, -state.bowP * BOW_LEN);
+
+    // pose
+    const sway = reduceMotion ? 0 : Math.sin(clock * 0.45) * 0.05;
+    violin.rotation.set(-0.22 + userX, -0.42 + userY + sway, 0.1);
+    renderer.render(scene, camera);
+  }
+  drawTrace();
+  requestAnimationFrame(frame);
+}
+
+window.addEventListener("resize", resize);
+if (window.ResizeObserver) new ResizeObserver(resize).observe(stage);
+resize();
+updateButtons();
+requestAnimationFrame(frame);
+})();
+</script>
+
+</body>
+</html>

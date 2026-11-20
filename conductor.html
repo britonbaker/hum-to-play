@@ -1,0 +1,2997 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Conductor Mode</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: the orchestra stage on top, then the selected section's readout,
+   then the ways to conduct it: section picker, talk/type, quick cues, hum. */
+:root {
+  --bg: #12100e;
+  --stage: #191512;
+  --glow: #3b2415;
+  --fg: #f3ece4;
+  --muted: #a69c91;
+  --faint: #6e655c;
+  --line: #2c2520;
+  --amber: #e08b3e;
+  --amber-hi: #f0a25a;
+  --amber-ink: #1f1409;
+  --warn: #f2b48a;
+  --display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --body: "Instrument Sans", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+html { box-sizing: border-box; height: 100%; }
+*, *::before, *::after { box-sizing: inherit; }
+body { margin: 0; min-height: 100%; background: var(--bg); color: var(--fg); font-family: var(--body); -webkit-font-smoothing: antialiased; }
+.app {
+  max-width: 760px; margin: 0 auto;
+  display: flex; flex-direction: column; gap: 14px;
+  padding-block: max(18px, env(safe-area-inset-top, 0px)) max(104px, calc(env(safe-area-inset-bottom, 0px) + 96px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+header { text-align: center; display: grid; gap: 4px; }
+h1 { margin: 0; font-family: var(--display); font-weight: 400; font-size: clamp(38px, 10vw, 50px); line-height: 1; letter-spacing: -0.01em; }
+h1 em { color: var(--amber-hi); }
+.sub { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.4; text-wrap: balance; }
+
+.stage {
+  position: relative; height: clamp(300px, 52vh, 500px);
+  border-radius: 24px; overflow: hidden;
+  background: radial-gradient(ellipse 70% 60% at 50% 45%, var(--glow), transparent 75%), var(--stage);
+}
+#scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: manipulation; cursor: pointer; }
+.labels { position: absolute; inset: 0; pointer-events: none; }
+.label {
+  position: absolute; left: 0; top: 0; pointer-events: none;
+  display: grid; justify-items: center; gap: 5px;
+}
+.label .ln {
+  pointer-events: auto; display: inline-flex; align-items: baseline; gap: 6px;
+  font: 500 12.5px/1 var(--body); color: var(--muted);
+  background: rgba(18, 16, 14, 0.72); border: 1px solid var(--line); border-radius: 999px;
+  padding: 6px 10px; cursor: pointer; white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.label .lm { font-family: var(--display); font-style: italic; font-size: 15px; color: var(--faint); }
+.label.sel .ln { color: var(--amber-ink); background: var(--amber); border-color: var(--amber); }
+.label.sel .lm { color: var(--amber-ink); }
+.label.all .ln { color: var(--fg); border-color: rgba(224, 139, 62, 0.6); }
+.label.muted .ln { opacity: 0.55; text-decoration: line-through; }
+.label.lead .ln::before { content: "♪"; color: var(--amber-hi); }
+.label.sel.lead .ln::before { color: var(--amber-ink); }
+.label.live .ln::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #b3261e; align-self: center; }
+.dots { pointer-events: auto; display: flex; gap: 4px; }
+.pdot {
+  position: relative; width: 20px; height: 20px; padding: 0; border-radius: 50%; cursor: pointer;
+  background: rgba(18, 16, 14, 0.75); border: 1px solid var(--line);
+}
+.pdot::after { content: ""; position: absolute; inset: 6px; border-radius: 50%; background: var(--faint); transition: background 0.1s, transform 0.1s; }
+.pdot.on::after { background: var(--amber-hi); transform: scale(1.25); }
+.pdot.own { border-color: rgba(240, 162, 90, 0.7); }
+.pdot.muted::after { background: transparent; box-shadow: inset 0 0 0 1px var(--faint); }
+.pdot.sel { background: var(--amber); border-color: var(--amber); }
+.pdot.sel::after { background: var(--amber-ink); }
+.cursor {
+  position: absolute; left: -14px; top: -14px; width: 28px; height: 28px; border-radius: 50%; pointer-events: none;
+  border: 2px solid var(--amber-hi); opacity: 0; transition: opacity 0.2s;
+  background: conic-gradient(rgba(240, 162, 90, 0.55) calc(var(--fill, 0) * 360deg), transparent 0);
+}
+.cursor.on { opacity: 1; }
+.stage-top {
+  position: absolute; top: 12px; left: 14px; right: 12px;
+  display: flex; justify-content: space-between; align-items: center; gap: 8px; pointer-events: none;
+}
+.tag { font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); }
+.chip {
+  pointer-events: auto; font: 500 12px/1 var(--body); color: var(--muted);
+  background: rgba(18, 16, 14, 0.6); border: 1px solid var(--line); border-radius: 999px;
+  padding: 7px 11px; cursor: pointer;
+}
+.chip[aria-pressed="false"] { color: var(--faint); text-decoration: line-through; }
+#pointBtn[aria-pressed="false"] { text-decoration: none; }
+#pointBtn[aria-pressed="true"] { color: var(--amber-hi); border-color: var(--amber); }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.heard {
+  position: absolute; left: 12px; right: 12px; bottom: 12px; text-align: center; pointer-events: none;
+  font-family: var(--display); font-size: 20px; line-height: 1.25; color: var(--fg);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+  opacity: 0; transition: opacity 0.35s;
+}
+.heard.on { opacity: 1; }
+.heard small { display: block; font-family: var(--body); font-size: 13px; color: var(--amber-hi); margin-top: 2px; }
+.nogl { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; color: var(--muted); text-align: center; font-size: 14px; }
+
+.sections { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.sec {
+  font: 500 14px/1.1 var(--body); color: var(--fg); background: transparent;
+  border: 1px solid var(--line); border-radius: 14px; padding: 10px 6px; cursor: pointer;
+  display: grid; gap: 3px; justify-items: center; min-width: 0;
+}
+.sec .k { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+.sec[aria-checked="true"] { border-color: var(--amber); background: rgba(224, 139, 62, 0.12); }
+.sec[aria-checked="true"] .k { color: var(--amber-hi); }
+
+.readout { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 14px; padding-inline: 6px; }
+.note { font-family: var(--display); font-size: 58px; line-height: 0.9; min-width: 2.1ch; text-align: right; font-variant-numeric: tabular-nums; transition: opacity 0.2s; }
+.note.dim { opacity: 0.3; }
+.details { min-width: 0; display: grid; gap: 3px; }
+.l1 { font-size: 16px; font-weight: 600; }
+.l2 { font-size: 14px; color: var(--muted); }
+.l3 { font-size: 12.5px; color: var(--faint); min-height: 1.3em; }
+
+.command { display: flex; gap: 8px; align-items: stretch; }
+.talk {
+  flex: none; display: inline-flex; align-items: center; gap: 8px;
+  font: 600 15px/1 var(--body); color: var(--fg); background: #2a211b;
+  border: 1px solid #3a2e26; border-radius: 999px; padding: 0 16px; cursor: pointer;
+  user-select: none; -webkit-user-select: none; touch-action: none;
+}
+.talk svg { width: 16px; height: 16px; }
+.talk.on { background: #b3261e; border-color: #b3261e; color: #fff; }
+.talk:disabled { opacity: 0.45; cursor: default; }
+.cmd-field { flex: 1 1 auto; min-width: 0; display: flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.cmd-field input {
+  flex: 1 1 auto; min-width: 0; font: 400 15px/1 var(--body); color: var(--fg);
+  background: transparent; border: 0; padding: 12px 14px; outline: none;
+}
+.cmd-field input::placeholder { color: var(--faint); }
+.cmd-field button { flex: none; font: 600 14px/1 var(--body); color: var(--amber-hi); background: transparent; border: 0; padding: 0 14px; cursor: pointer; }
+.cmd-field:focus-within { border-color: var(--faint); }
+
+.quick { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.ghost {
+  font: 500 14px/1 var(--body); color: var(--fg); background: transparent;
+  border: 1px solid var(--line); border-radius: 999px; padding: 10px 14px; cursor: pointer;
+}
+.ghost:hover { border-color: var(--faint); }
+.ghost:disabled { opacity: 0.4; cursor: default; }
+
+.controls { display: grid; justify-items: center; gap: 12px; }
+.primary {
+  display: inline-flex; align-items: center; gap: 12px; font: 600 17px/1 var(--body);
+  color: var(--amber-ink); background: var(--amber); border: 0; border-radius: 999px;
+  padding: 17px 28px; min-width: 190px; justify-content: center; cursor: pointer;
+  box-shadow: 0 10px 30px -12px rgba(224, 139, 62, 0.6); transition: background 0.15s, transform 0.1s;
+}
+.primary:hover { background: var(--amber-hi); }
+.primary:active { transform: scale(0.98); }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--amber-ink); transition: transform 0.06s linear; }
+.primary.live .dot { background: #b3261e; }
+.secondary { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+button:focus-visible, label.ghost:focus-within, .chip:focus-visible, .label:focus-visible { outline: 2px solid var(--amber-hi); outline-offset: 3px; }
+.file-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.status { margin: 0; min-height: 1.4em; font-size: 13.5px; color: var(--warn); text-align: center; text-wrap: balance; }
+.foot { margin: 0; font-size: 12.5px; color: var(--faint); text-align: center; text-wrap: balance; }
+@media (max-width: 420px) { .talk .tl { display: none; } .talk { padding: 0 14px; } }
+@media (prefers-reduced-motion: reduce) { .primary, .dot, .note, .heard, .label { transition: none; } }
+.sec.everyone span:first-child { font-family: var(--display); font-style: italic; font-size: 16px; }
+.players { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; min-height: 0; }
+.players:empty { display: none; }
+.pchip {
+  font: 500 13px/1 var(--body); color: var(--muted); background: transparent;
+  border: 1px solid var(--line); border-radius: 999px; padding: 8px 12px; cursor: pointer;
+}
+.pchip[aria-pressed="true"] { color: var(--amber-ink); background: var(--amber); border-color: var(--amber); }
+.pchip.own::after { content: " ♪"; }
+.pchip.rest { text-decoration: line-through; opacity: 0.6; }
+.hive { font-family: var(--mono); font-size: 11px; letter-spacing: 0.02em; color: var(--faint); text-align: center; text-wrap: balance; min-height: 1.3em; }
+
+/* Clef, the little helper in the corner */
+.clef-btn {
+  position: fixed; z-index: 20; width: 66px; height: 99px; padding: 0; border: 0; background: transparent; cursor: pointer;
+  right: max(14px, env(safe-area-inset-right, 0px)); bottom: max(10px, env(safe-area-inset-bottom, 0px));
+  filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.55));
+}
+.clef-btn svg { width: 100%; height: 100%; overflow: visible; }
+.clef-btn .body { transform-box: fill-box; transform-origin: 50% 100%; animation: bob 2.8s ease-in-out infinite; }
+.clef-btn.think .body { animation: wiggle 0.5s ease-in-out infinite; }
+.clef-btn .lid { transform-box: fill-box; transform-origin: center; transition: transform 0.07s; }
+.clef-btn.blink .lid { transform: scaleY(0.12); }
+.clef-btn:hover .body { animation-duration: 1.2s; }
+@keyframes bob { 0%, 100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-4px) rotate(2deg); } }
+@keyframes wiggle { 0%, 100% { transform: rotate(-5deg); } 50% { transform: rotate(5deg); } }
+.clef-tip {
+  position: absolute; right: 58px; bottom: 62px; white-space: nowrap; pointer-events: none;
+  font: 500 12px/1 var(--body); color: var(--amber-ink); background: var(--amber-hi); border-radius: 999px; padding: 6px 9px;
+  opacity: 0; transform: translateY(4px); transition: opacity 0.2s, transform 0.2s;
+}
+.clef-btn:hover .clef-tip, .clef-btn:focus-visible .clef-tip { opacity: 1; transform: none; }
+.clef-panel {
+  position: fixed; z-index: 21; right: max(14px, env(safe-area-inset-right, 0px)); bottom: calc(max(10px, env(safe-area-inset-bottom, 0px)) + 104px);
+  width: min(350px, calc(100vw - 28px)); max-height: min(62vh, 560px);
+  display: flex; flex-direction: column; background: #1d1814; border: 1px solid #3a2e26; border-radius: 20px;
+  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.8); overflow: hidden;
+}
+.clef-panel[hidden] { display: none; }
+.clef-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 8px; }
+.clef-head b { font-family: var(--display); font-weight: 400; font-size: 22px; }
+.clef-head button { font: 500 13px/1 var(--body); color: var(--muted); background: transparent; border: 0; cursor: pointer; padding: 6px; }
+.clef-log { flex: 1 1 auto; overflow-y: auto; padding: 4px 14px 10px; display: grid; gap: 8px; align-content: start; }
+.cmsg { font-size: 14px; line-height: 1.4; max-width: 88%; padding: 8px 11px; border-radius: 14px; background: #2a211b; justify-self: start; }
+.cmsg.you { justify-self: end; background: rgba(224, 139, 62, 0.18); color: var(--fg); }
+.ideas { display: grid; gap: 8px; }
+.idea { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; align-items: center; border: 1px solid var(--line); border-radius: 14px; padding: 10px 11px; }
+.idea b { font-weight: 600; font-size: 14px; }
+.idea span { grid-column: 1; font-size: 13px; line-height: 1.35; color: var(--muted); }
+.idea button { grid-column: 2; grid-row: 1 / span 2; font: 600 13px/1 var(--body); color: var(--amber-ink); background: var(--amber); border: 0; border-radius: 999px; padding: 9px 12px; cursor: pointer; }
+.idea button:disabled { background: transparent; color: var(--faint); box-shadow: inset 0 0 0 1px var(--line); cursor: default; }
+.clef-quick { display: flex; gap: 6px; overflow-x: auto; padding: 0 14px 8px; scrollbar-width: none; }
+.clef-quick button { flex: none; font: 500 12.5px/1 var(--body); color: var(--fg); background: transparent; border: 1px solid var(--line); border-radius: 999px; padding: 8px 11px; cursor: pointer; }
+.clef-form { display: flex; gap: 6px; padding: 8px 10px 10px; border-top: 1px solid var(--line); }
+.clef-form input { flex: 1 1 auto; min-width: 0; font: 400 15px/1 var(--body); color: var(--fg); background: transparent; border: 1px solid var(--line); border-radius: 999px; padding: 10px 12px; outline: none; }
+.clef-form input:focus { border-color: var(--faint); }
+.clef-form button { flex: none; font: 600 14px/1 var(--body); border-radius: 999px; border: 0; cursor: pointer; padding: 0 12px; }
+.clef-form .mic { color: var(--fg); background: #2a211b; display: inline-flex; align-items: center; }
+.clef-form .mic.on { background: #b3261e; color: #fff; }
+.clef-form .mic svg { width: 16px; height: 16px; }
+.clef-form .send { color: var(--amber-ink); background: var(--amber); }
+@media (max-width: 420px) { .sec { font-size: 12.5px; padding: 9px 3px; } }
+@media (prefers-reduced-motion: reduce) { .clef-btn .body, .clef-btn.think .body { animation: none; } }
+
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Conduct <em>by ear</em></h1>
+    <p class="sub">Talk to everyone, a section or one player. Hum and they play along in harmony.</p>
+  </header>
+
+  <section class="stage" id="stage" aria-label="Orchestra stage">
+    <canvas id="scene" aria-label="Four orchestra sections on a stage: violins, flute, brass and cellos. Tap one to talk to it, or the empty stage to talk to everyone."></canvas>
+    <div class="labels" id="labels"></div>
+    <div class="cursor" id="cursor" aria-hidden="true"></div>
+    <div class="stage-top">
+      <span class="tag" id="tempoTag">♩ = 120 · 4/4</span>
+      <span class="chips">
+        <button class="chip" id="pointBtn" type="button" aria-pressed="false" title="Point at a section with your hand, using your camera">Point</button>
+        <button class="chip" id="fixBtn" type="button" aria-pressed="true">Auto-correct on</button>
+        <button class="chip" id="soundBtn" type="button" aria-pressed="true">Sound on</button>
+      </span>
+    </div>
+    <div class="heard" id="heard" aria-live="polite"></div>
+  </section>
+
+  <div class="sections" id="secRow" role="radiogroup" aria-label="Who you're conducting">
+    <button class="sec everyone" id="allBtn" type="button" role="radio" aria-checked="false"><span>Everyone</span><span class="k">0 · tutti</span></button>
+  </div>
+  <div class="players" id="playerRow" aria-label="Players in this section"></div>
+
+  <div class="readout" aria-live="polite">
+    <div class="note dim" id="noteName">–</div>
+    <div class="details">
+      <div class="l1" id="line1">Violins · mf</div>
+      <div class="l2" id="line2">No line yet. Hum to teach it one.</div>
+      <div class="l3" id="line3">Tap Play the minuet, or tap Listen and hum.</div>
+    </div>
+  </div>
+  <div class="hive" id="hive"></div>
+
+  <form class="command" id="cmdForm" autocomplete="off">
+    <button class="talk" id="talkBtn" type="button" aria-label="Hold to talk">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+      <span class="tl" id="talkLabel">Hold to talk</span>
+    </button>
+    <div class="cmd-field">
+      <input id="cmdInput" type="text" enterkeyhint="send" placeholder="Try: cellos louder" aria-label="Cue for the orchestra">
+      <button type="submit">Send</button>
+    </div>
+  </form>
+
+  <div class="quick" id="quick">
+    <button class="ghost" type="button" data-cmd="louder">Louder</button>
+    <button class="ghost" type="button" data-cmd="softer">Softer</button>
+    <button class="ghost" type="button" data-cmd="faster">Faster</button>
+    <button class="ghost" type="button" data-cmd="slower">Slower</button>
+    <button class="ghost" type="button" data-cmd="solo">Solo</button>
+    <button class="ghost" type="button" data-cmd="rest" id="restChip">Rest</button>
+  </div>
+
+  <div class="controls">
+    <button class="primary" id="micBtn" type="button"><span class="dot" id="dot"></span><span id="micLabel">Listen</span></button>
+    <div class="secondary">
+      <button class="ghost" id="playBtn" type="button">Play the minuet</button>
+      <label class="ghost" id="fileLabel">Hum from a voice memo<input class="file-input" id="fileInput" type="file" accept="audio/*"></label>
+    </div>
+    <p class="status" id="status" role="status"></p>
+    <p class="foot">Listen hears humming and talking: hum and they play it, talk and they follow the cue. Keys 0 to 4 pick everyone or a section. Hold Space to talk.</p>
+  </div>
+</div>
+
+<button class="clef-btn" id="clefBtn" type="button" aria-label="Ask Clef for ideas" aria-expanded="false" aria-controls="clefPanel">
+  <span class="clef-tip">Ask me for ideas</span>
+  <svg viewBox="0 0 80 120" aria-hidden="true">
+    <ellipse cx="34" cy="116" rx="18" ry="2.6" fill="#000" opacity=".45"/>
+    <g class="body">
+      <path d="M30 107 L26 113 M38 106 L41 113" stroke="#e08b3e" stroke-width="3" stroke-linecap="round"/>
+      <ellipse cx="24" cy="114" rx="5.5" ry="2.6" fill="#e08b3e"/><ellipse cx="43" cy="114" rx="5.5" ry="2.6" fill="#e08b3e"/>
+      <path d="M28 104 C 34 109 43 103 40 94 L 36 22 C 35 9 49 7 48 19 C 47 31 30 38 24 53 C 17 69 27 85 41 85 C 55 85 59 67 47 62 C 37 58 29 67 34 76" fill="none" stroke="#f0a25a" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="27" cy="102" r="6.5" fill="#f0a25a"/>
+      <g transform="translate(33 68)"><g class="lid"><circle r="7.5" fill="#fff" stroke="#1f1409" stroke-width="1.6"/><circle class="pupil" r="3.4" fill="#1f1409"/></g></g>
+      <g transform="translate(48 66)"><g class="lid"><circle r="7.5" fill="#fff" stroke="#1f1409" stroke-width="1.6"/><circle class="pupil" r="3.4" fill="#1f1409"/></g></g>
+    </g>
+  </svg>
+</button>
+<section class="clef-panel" id="clefPanel" hidden aria-label="Clef, your orchestra helper">
+  <div class="clef-head"><b>Clef</b><button type="button" id="clefClose">Close</button></div>
+  <div class="clef-log" id="clefLog" aria-live="polite"></div>
+  <div class="clef-quick" id="clefQuick">
+    <button type="button" data-q="How do we make it more interesting?">More interesting</button>
+    <button type="button" data-q="Make it more epic">More epic</button>
+    <button type="button" data-q="Surprise me">Surprise me</button>
+    <button type="button" data-q="What can I say?">What can I say?</button>
+  </div>
+  <form class="clef-form" id="clefForm" autocomplete="off">
+    <button class="mic" id="clefTalk" type="button" aria-label="Hold to talk to Clef"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+    <input id="clefInput" type="text" enterkeyhint="send" placeholder="Ask Clef anything" aria-label="Ask Clef">
+    <button class="send" type="submit">Ask</button>
+  </form>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* ------------------------------------------------------------------ */
+/* The orchestra's brain: pure music logic, no audio or DOM.           */
+/* Tempo from onsets, key from pitches, auto-correct, harmony,         */
+/* hum-or-speech, and a tiny naive Bayes intent model.                 */
+/* ------------------------------------------------------------------ */
+(function (root) {
+"use strict";
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const mod12 = (x) => ((x % 12) + 12) % 12;
+const PC = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"];
+const MAJOR = [0, 2, 4, 5, 7, 9, 11];
+const MINOR = [0, 2, 3, 5, 7, 8, 10];
+const KS_MAJ = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
+const KS_MIN = [6.33, 2.68, 3.52, 5.38, 2.6, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
+
+function corr(a, b) {
+  const n = a.length; let ma = 0, mb = 0;
+  for (let i = 0; i < n; i++) { ma += a[i]; mb += b[i]; }
+  ma /= n; mb /= n;
+  let num = 0, da = 0, db = 0;
+  for (let i = 0; i < n; i++) { const x = a[i] - ma, y = b[i] - mb; num += x * y; da += x * x; db += y * y; }
+  return da && db ? num / Math.sqrt(da * db) : 0;
+}
+
+/* Key: Krumhansl-Schmuckler profiles over how long each pitch class sounds.
+   The first and last notes count extra (melodies tend to start and end at home),
+   and an existing key gets a small bonus so the orchestra doesn't flip-flop. */
+function detectKey(notes, prior) {
+  const hist = new Array(12).fill(0);
+  notes.forEach((n, i) => {
+    const w = (n.w || n.d || 1) * (i === 0 || i === notes.length - 1 ? 1.6 : 1);
+    hist[mod12(Math.round(n.m))] += w;
+  });
+  const res = [];
+  for (let t = 0; t < 12; t++) {
+    for (const mode of ["major", "minor"]) {
+      const prof = mode === "major" ? KS_MAJ : KS_MIN;
+      const rot = prof.map((_, i) => prof[mod12(i - t)]);
+      let s = corr(hist, rot);
+      if (prior && prior.tonic === t && prior.mode === mode) s += 0.08;
+      res.push({ tonic: t, mode, score: s });
+    }
+  }
+  res.sort((a, b) => b.score - a.score);
+  const best = res[0];
+  return { tonic: best.tonic, mode: best.mode, score: best.score, conf: best.score - res[1].score };
+}
+const keyName = (k) => k ? `${PC[k.tonic]} ${k.mode}` : "";
+const scaleOf = (k) => (k.mode === "minor" ? MINOR : MAJOR).map((x) => mod12(x + k.tonic));
+const inKey = (m, k) => scaleOf(k).includes(mod12(Math.round(m)));
+
+/* nearest note in the key; ties go to the side the raw pitch leans */
+function snapToKey(m, k) {
+  if (!k) return Math.round(m);
+  const sc = scaleOf(k);
+  let best = null, bd = 99;
+  for (let c = Math.floor(m) - 2; c <= Math.ceil(m) + 2; c++) {
+    if (!sc.includes(mod12(c))) continue;
+    const d = Math.abs(c - m);
+    if (d < bd - 1e-6) { bd = d; best = c; }
+  }
+  return best;
+}
+/* move a pitch by scale steps inside the key (a diatonic third is 2 steps) */
+function stepInKey(m, steps, k) {
+  const sc = scaleOf(k);
+  let x = snapToKey(m, k), n = Math.abs(steps), dir = Math.sign(steps);
+  while (n > 0) { x += dir; if (sc.includes(mod12(x))) n--; }
+  return x;
+}
+
+/* Tempo: every pair of nearby onsets votes for beat lengths it fits as
+   1/2, 1, 1.5, 2, 3 or 4 beats. A gentle preference for 80 to 130 bpm settles
+   the usual "is it 60 or 120" ambiguity, as a person tapping along would. */
+function estimateTempo(onsets, opts) {
+  opts = opts || {};
+  const lo = opts.min || 60, hi = opts.max || 176;
+  if (!onsets || onsets.length < 3) return null;
+  const t = onsets.slice().sort((a, b) => a - b);
+  const pairs = [];
+  for (let i = 0; i < t.length; i++) for (let j = i + 1; j < t.length && j <= i + 4; j++) {
+    const ioi = t[j] - t[i];
+    if (ioi > 0.12 && ioi < 3) pairs.push({ ioi, w: j === i + 1 ? 1 : 0.6 });
+  }
+  if (pairs.length < 2) return null;
+  const MULT = [[0.5, 0.55], [1, 1], [1.5, 0.45], [2, 0.8], [3, 0.6], [4, 0.6]];
+  let best = null;
+  const scores = [];
+  for (let bpm = lo; bpm <= hi; bpm += 0.5) {
+    const p = 60 / bpm;
+    let s = 0;
+    for (const { ioi, w } of pairs) {
+      let f = 0;
+      for (const [k, wk] of MULT) {
+        const err = Math.abs(ioi - k * p);
+        const sig = 0.03 + 0.05 * k * p;
+        f = Math.max(f, wk * Math.exp(-(err * err) / (2 * sig * sig)));
+      }
+      s += w * f;
+    }
+    const pref = Math.exp(-0.5 * Math.pow(Math.log2(bpm / 104) / 0.55, 2));
+    if (opts.prior) s *= 1 + 0.25 * Math.exp(-0.5 * Math.pow(Math.log2(bpm / opts.prior) / 0.05, 2));
+    s *= 0.55 + 0.45 * pref;
+    scores.push(s);
+    if (!best || s > best.s) best = { bpm, s };
+  }
+  const sorted = scores.slice().sort((a, b) => b - a);
+  const total = pairs.reduce((a, p) => a + p.w, 0);
+  return { bpm: Math.round(best.bpm), conf: clamp(best.s / total, 0, 1), spread: sorted[0] - sorted[Math.min(20, sorted.length - 1)] };
+}
+
+/* Auto-correct a hummed phrase: snap starts and ends to the beat grid,
+   pitches to the key, fold wobble-made extra notes back in, and hold the last
+   note to the end of the bar so the loop breathes instead of stuttering. */
+function correctPhrase(raw, o) {
+  const bps = o.bpm / 60, meter = o.meter || 4, fix = o.autocorrect !== false;
+  let notes = raw.filter((n) => n.dur > 0.05).map((n) => ({ b: (o.offset || 0) + n.t * bps, e: (o.offset || 0) + (n.t + n.dur) * bps, m: n.m }));
+  if (!notes.length) return null;
+  if (o.startAtZero) { const s0 = notes[0].b; notes.forEach((n) => { n.b -= s0; n.e -= s0; }); }
+  const durs = notes.map((n) => n.e - n.b).sort((a, b) => a - b);
+  const med = durs[durs.length >> 1];
+  const grid = !fix ? 0.25 : med < 0.4 ? 0.25 : med < 1.4 ? 0.5 : 1;
+  const qz = (x) => Math.round(x / grid) * grid;
+  let out = [];
+  notes.forEach((n) => {
+    const m = fix ? snapToKey(n.m, o.key) : Math.round(n.m);
+    const b = qz(n.b);
+    let e = Math.max(b + grid, qz(n.e));
+    const prev = out[out.length - 1];
+    // a blip shorter than half a grid step is wobble, not a note
+    if (fix && n.e - n.b < grid * 0.45 && prev) { prev.e = Math.max(prev.e, e); return; }
+    if (fix && prev && prev.m === m && b - prev.e < grid * 0.75 && n.e - n.b < grid * 1.5) { prev.e = Math.max(prev.e, e); return; }
+    if (prev && b <= prev.b) { if (fix) return; }
+    out.push({ b, e, m });
+  });
+  for (let i = 0; i < out.length - 1; i++) if (out[i].e > out[i + 1].b) out[i].e = out[i + 1].b;
+  out = out.filter((n) => n.e - n.b > 0.01);
+  if (!out.length) return null;
+  const endRaw = out[out.length - 1].e;
+  let len = Math.max(meter, Math.ceil((endRaw - 0.01) / meter) * meter);
+  if (fix) {
+    // a phrase that barely spills into a new bar was meant to end on the bar line
+    if (len > meter && endRaw - (len - meter) <= 0.5 && out[out.length - 1].b < len - meter) len -= meter;
+    const last = out[out.length - 1];
+    last.e = Math.min(len, Math.max(last.e, last.b + grid));
+    if (len - last.e <= Math.max(1, meter / 2)) last.e = len;
+    out = out.filter((n) => n.b < len);
+  }
+  return { notes: out.map((n) => ({ b: n.b, d: n.e - n.b, m: n.m })), len, grid };
+}
+
+/* Harmony: one chord per bar (half bars in 4/4 when the tune asks for it),
+   chosen by dynamic programming: chord tones under the tune score, strong
+   beats count more, and good progressions (V to I, IV to V, ending home) win ties. */
+const DEG_MAJ = [0, 3, 4, 5, 1, 2];            // I IV V vi ii iii
+const DEG_MIN = [0, 3, 4, 5, 2, 6];            // i iv V VI III VII
+function triad(key, deg) {
+  const sc = key.mode === "minor" ? MINOR : MAJOR;
+  const pcs = [0, 2, 4].map((s) => mod12(sc[(deg + s) % 7] + key.tonic + (deg + s >= 7 ? 0 : 0)));
+  if (key.mode === "minor" && deg === 4) pcs[1] = mod12(pcs[1] + 1); // raised 7th makes V major
+  return pcs;
+}
+const GOOD = { "4>0": 0.3, "3>4": 0.2, "1>4": 0.2, "5>3": 0.15, "0>3": 0.12, "0>4": 0.12, "0>5": 0.1, "3>0": 0.12, "5>1": 0.12, "2>5": 0.08, "6>0": 0.1, "6>2": 0.05 };
+function harmonize(mel, key, meter) {
+  const degs = key.mode === "minor" ? DEG_MIN : DEG_MAJ;
+  const chords = degs.map((d) => ({ deg: d, pcs: triad(key, d), root: triad(key, d)[0] }));
+  const fit = (segB, segL, ch) => {
+    let s = 0;
+    mel.notes.forEach((n) => {
+      const ov = Math.min(n.b + n.d, segB + segL) - Math.max(n.b, segB);
+      if (ov <= 0) return;
+      const strong = Math.abs(n.b - segB) < 0.01 ? 1.6 : Math.abs(n.b - Math.round(n.b)) < 0.01 ? 1.2 : 0.8;
+      s += ov * strong * (ch.pcs.includes(mod12(n.m)) ? 1 : -0.7);
+    });
+    return s;
+  };
+  const bars = Math.round(mel.len / meter);
+  const segs = [];
+  for (let i = 0; i < bars; i++) {
+    const b = i * meter;
+    const whole = Math.max(...chords.map((c) => fit(b, meter, c)));
+    if (meter === 4) {
+      const h1 = Math.max(...chords.map((c) => fit(b, 2, c))), h2 = Math.max(...chords.map((c) => fit(b + 2, 2, c)));
+      if (h1 + h2 > whole + 1.2) { segs.push({ b, l: 2 }, { b: b + 2, l: 2 }); continue; }
+    }
+    segs.push({ b, l: meter });
+  }
+  const N = segs.length, K = chords.length;
+  const V = [], back = [];
+  for (let i = 0; i < N; i++) {
+    V.push(new Array(K).fill(-1e9)); back.push(new Array(K).fill(0));
+    const { b, l } = segs[i];
+    for (let k = 0; k < K; k++) {
+      let local = fit(b, l, chords[k]);
+      const deg = chords[k].deg;
+      if (i === 0 && deg === 0) local += 0.6 * l;
+      if (i === N - 1 && N > 1) local += deg === 0 ? 0.5 * l : deg === 4 ? 0.2 * l : 0;
+      if (i === N - 2 && N > 2 && deg === 4) local += 0.15 * l;
+      if (deg === 2 || deg === 6) local -= 0.15 * l; // iii and VII are rarer colours
+      if (i === 0) { V[0][k] = local; continue; }
+      for (let j = 0; j < K; j++) {
+        const mv = chords[j].deg + ">" + deg;
+        const trans = (GOOD[mv] || 0) * l - (j === k ? 0.08 * l : 0);
+        const v = V[i - 1][j] + local + trans;
+        if (v > V[i][k]) { V[i][k] = v; back[i][k] = j; }
+      }
+    }
+  }
+  let k = 0;
+  for (let j = 1; j < K; j++) if (V[N - 1][j] > V[N - 1][k]) k = j;
+  const path = new Array(N);
+  for (let i = N - 1; i >= 0; i--) { path[i] = k; k = back[i][k]; }
+  return segs.map((s, i) => ({ b: s.b, d: s.l, deg: chords[path[i]].deg, pcs: chords[path[i]].pcs, root: chords[path[i]].root }));
+}
+const ROMAN_MAJ = ["I", "ii", "iii", "IV", "V", "vi", "vii°"];
+const ROMAN_MIN = ["i", "ii°", "III", "iv", "V", "VI", "VII"];
+const chordName = (c, key) => (key.mode === "minor" ? ROMAN_MIN : ROMAN_MAJ)[c.deg];
+
+const nearestPc = (pc, target) => { let m = target - 12; while (mod12(m) !== pc) m++; return Math.abs(m + 12 - target) < Math.abs(m - target) ? m + 12 : m; };
+function fitLine(notes, range, center) {
+  if (!notes.length) return notes;
+  const ms = notes.map((n) => n.m).sort((a, b) => a - b);
+  const med = ms[ms.length >> 1];
+  let sh = Math.round((center - med) / 12) * 12;
+  while (ms[0] + sh < range[0] && ms[ms.length - 1] + sh + 12 <= range[1] + 2) sh += 12;
+  while (ms[ms.length - 1] + sh > range[1] && ms[0] + sh - 12 >= range[0] - 2) sh -= 12;
+  return notes.map((n) => ({ ...n, m: clamp(n.m + sh, range[0], range[1]) }));
+}
+
+/* Lines the other players can take, all from the same tune and chords. */
+function lineFor(role, mel, chords, key, meter, range, center, avoid) {
+  const out = [];
+  if (role === "melody") return fitLine(mel.notes.map((n) => ({ ...n })), range, center);
+  if (role === "bass") {
+    let prev = center;
+    chords.forEach((c) => {
+      const r = nearestPc(c.root, prev);
+      if (c.d >= 4) {
+        const fifth = nearestPc(c.pcs[2], r);
+        out.push({ b: c.b, d: 2, m: r }, { b: c.b + 2, d: c.d - 2, m: fifth < r - 7 ? fifth + 12 : fifth });
+      } else out.push({ b: c.b, d: c.d, m: r });
+      prev = clamp(r, center - 5, center + 5);
+    });
+    return out.map((n) => ({ ...n, m: clamp(n.m, range[0], range[1]) }));
+  }
+  if (role === "pad" || role === "pad2") {
+    // a held chord tone per chord, moving to the nearest one each time
+    let prev = role === "pad2" ? center - 4 : center;
+    chords.forEach((c, i) => {
+      const used = avoid ? avoid.filter((a) => a.b === c.b).map((a) => mod12(a.m)) : [];
+      const order = role === "pad2" ? [2, 0, 1] : [1, 2, 0];
+      let best = null, bd = 99;
+      order.forEach((ix, rank) => {
+        const pc = c.pcs[ix];
+        if (used.includes(pc)) return;
+        const m = nearestPc(pc, prev);
+        const d = Math.abs(m - prev) + rank * 0.6 + (i === 0 && ix === 0 ? 2 : 0);
+        if (d < bd) { bd = d; best = m; }
+      });
+      if (best == null) best = nearestPc(c.pcs[1], prev);
+      out.push({ b: c.b, d: c.d, m: clamp(best, range[0], range[1]) });
+      prev = best;
+    });
+    return out;
+  }
+  if (role === "third" || role === "below") {
+    // a harmony that moves with the tune: a third above (or below) in the key,
+    // swapped for the nearest chord tone when a long note would clash
+    const dir = role === "third" ? 1 : -1;
+    mel.notes.forEach((n) => {
+      const c = chords.find((x) => n.b >= x.b - 1e-6 && n.b < x.b + x.d) || chords[0];
+      let m = stepInKey(n.m, 2 * dir, key);
+      if (n.d >= 1 && !c.pcs.includes(mod12(m))) {
+        let best = m, bd = 99;
+        c.pcs.forEach((pc) => { for (let x = n.m + dir; Math.abs(x - n.m) <= 9; x += dir) if (mod12(x) === pc) { const d = Math.abs(x - m); if (d < bd) { bd = d; best = x; } break; } });
+        m = best;
+      }
+      const prev = out[out.length - 1];
+      if (prev && n.d < 0.5 && prev.b + prev.d >= n.b - 1e-6 && n.b - prev.b < 1) { prev.d = n.b + n.d - prev.b; return; }
+      out.push({ b: n.b, d: n.d, m });
+    });
+    return fitLine(out, range, center);
+  }
+  if (role === "echo") {
+    // the tune again a bar later, sparser: only notes a beat or longer
+    mel.notes.forEach((n) => { if (n.d >= 1 || n.b % 1 === 0) out.push({ b: (n.b + meter) % mel.len, d: Math.min(n.d, 2), m: n.m }); });
+    out.sort((a, b) => a.b - b.b);
+    for (let i = 0; i < out.length - 1; i++) if (out[i].b + out[i].d > out[i + 1].b) out[i].d = out[i + 1].b - out[i].b;
+    return fitLine(out.filter((n) => n.d > 0), range, center);
+  }
+  return out;
+}
+
+/* Hum or talk? Humming is almost all voiced, steady in pitch and low in hiss.
+   Speech breaks into consonants (noisy, unvoiced) several times a second and its
+   pitch slides around. Scored from frame features over the first moments. */
+function voiceFeatures(frames) {
+  const act = frames.filter((f) => f.active);
+  if (act.length < 4) return null;
+  const voiced = act.filter((f) => f.voiced);
+  const vr = voiced.length / act.length;
+  const hiss = act.filter((f) => f.zcr > 0.12).length / act.length;
+  let breaks = 0;
+  for (let i = 1; i < act.length; i++) if (act[i - 1].voiced && !act[i].voiced) breaks++;
+  const secs = act.length * (frames[0].dt || 0.0213);
+  const jumps = [];
+  for (let i = 1; i < frames.length; i++) {
+    const a = frames[i - 1], b = frames[i];
+    if (a.voiced && b.voiced && a.midi != null && b.midi != null) jumps.push(Math.abs(b.midi - a.midi));
+  }
+  jumps.sort((a, b) => a - b);
+  const glide = jumps.length ? jumps[jumps.length >> 1] : 1;
+  // energy flicker: syllables make the level pump several times a second
+  let flick = 0;
+  for (let i = 2; i < act.length; i++) {
+    const a = act[i - 2].rms, b = act[i - 1].rms, c = act[i].rms;
+    if (b < a * 0.6 && b < c * 0.6) flick++;
+  }
+  return { vr, hiss, breaksPerSec: breaks / secs, glide, flickPerSec: flick / secs, secs };
+}
+function classifyVoice(frames) {
+  const f = voiceFeatures(frames);
+  if (!f) return { kind: "unsure", p: 0.5 };
+  const z = -1.2 + 5 * (0.88 - f.vr) + 4.5 * f.hiss + 0.35 * f.breaksPerSec + 2.2 * Math.min(f.glide, 1.5) + 0.25 * f.flickPerSec;
+  const p = 1 / (1 + Math.exp(-z));
+  return { kind: p > 0.7 ? "speech" : p < 0.3 ? "hum" : "unsure", p, f };
+}
+
+/* Intent: a few dozen example phrases train a naive Bayes model on load, so
+   loose wording like "ok let's ditch this and do something new" still lands. */
+const INTENT_EXAMPLES = {
+  add: ["add in a sound", "add a sound", "add this on top", "layer this in", "add another part", "keep that and add this", "now add this", "put this on top",
+    "add a new part", "and also this", "layer something", "add a line", "let's add to it", "stack this", "add this to the mix", "add flute on top",
+    "keep going and add this", "bring in another layer", "add this one too", "over the top of that"],
+  switch: ["okay let's stop this and switch to a new thing", "stop this and start something new", "new idea", "scrap that", "let's do something different",
+    "switch it up", "start fresh", "new song", "throw that out", "forget all that", "something else now", "let's try a new thing", "clear everything and start over",
+    "change it up completely", "a whole new tune", "ditch this", "wipe it and do another", "different song", "start a new piece", "let's move on to a new one"],
+  lead: ["you take the melody", "take the lead", "flute take the tune", "you lead", "let the cellos lead", "give the melody to the brass", "violins take the melody",
+    "you play the tune", "you have the melody now", "lead this one", "melody goes to the flute", "you carry the tune", "you play this", "you do this", "you play the main part"],
+  follow: ["everyone copy me", "follow me", "play what i hum", "mimic me", "everyone play along with me", "all of you follow", "harmonize with me", "back me up",
+    "accompany me", "play along", "copy what i do", "everyone join in on my tune", "harmonize this", "make it sound like an orchestra"],
+  rawon: ["don't fix my notes", "keep it raw", "no auto correct", "turn off autocorrect", "play exactly what i hum", "don't correct me", "leave my notes alone", "no snapping"],
+  rawoff: ["fix my notes", "auto correct on", "turn on autocorrect", "clean it up", "snap it to the key", "make it in tune", "correct my timing", "tidy it up"],
+  ideas: ["how do we make it more interesting", "give me ideas", "what should we do next", "surprise me", "spice it up", "make it cooler", "any ideas",
+    "help me", "it sounds boring", "what else can we try", "make this better", "suggest something", "how can this sound more epic", "what would make it pop",
+    "i'm stuck", "inspire me", "what now"],
+  other: ["cellos louder", "faster", "slower", "violins softer", "just the violins", "from the top", "everyone stop", "brass rest", "come in", "undo", "staccato",
+    "a little louder", "tempo 120", "flute up an octave", "cellos", "the brass", "play", "everyone together", "quieter please", "speed it up", "louder", "rest",
+    "second violin softer", "violin two louder", "first cello rest", "you louder", "everyone", "the whole orchestra"],
+};
+const tok = (s) => s.toLowerCase().replace(/[’']/g, "").replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(Boolean);
+const feats = (s) => { const w = tok(s); const f = w.slice(); for (let i = 0; i < w.length - 1; i++) f.push(w[i] + "_" + w[i + 1]); return f; };
+function trainIntents(examples) {
+  const model = { classes: {}, vocab: new Set() };
+  Object.entries(examples).forEach(([c, list]) => {
+    const counts = {}; let total = 0;
+    list.forEach((s) => feats(s).forEach((f) => { counts[f] = (counts[f] || 0) + 1; total++; model.vocab.add(f); }));
+    model.classes[c] = { counts, total, n: list.length };
+  });
+  model.N = Object.values(model.classes).reduce((a, c) => a + c.n, 0);
+  return model;
+}
+const INTENTS = trainIntents(INTENT_EXAMPLES);
+function classifyIntent(text) {
+  const f = feats(text).filter((x) => INTENTS.vocab.has(x));
+  if (!f.length) return { intent: "other", p: 0, known: 0 };
+  const V = INTENTS.vocab.size;
+  const logp = {};
+  Object.entries(INTENTS.classes).forEach(([c, m]) => {
+    let lp = Math.log(m.n / INTENTS.N);
+    f.forEach((x) => { lp += Math.log(((m.counts[x] || 0) + 0.5) / (m.total + 0.5 * V)); });
+    logp[c] = lp;
+  });
+  const mx = Math.max(...Object.values(logp));
+  let Z = 0; Object.values(logp).forEach((v) => (Z += Math.exp(v - mx)));
+  let best = "other", bp = 0;
+  const probs = {};
+  Object.entries(logp).forEach(([c, v]) => { probs[c] = Math.exp(v - mx) / Z; if (probs[c] > bp) { bp = probs[c]; best = c; } });
+  return { intent: best, p: bp, known: f.length, probs };
+}
+
+root.ConductorBrain = { PC, detectKey, keyName, scaleOf, inKey, snapToKey, stepInKey, estimateTempo, correctPhrase, harmonize, chordName, lineFor, fitLine, voiceFeatures, classifyVoice, classifyIntent, mod12 };
+})(typeof window !== "undefined" ? window : globalThis);
+
+</script>
+<script>
+(() => {
+"use strict";
+const $ = (id) => document.getElementById(id);
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const ease = (dt, tau) => 1 - Math.exp(-dt / tau);
+const hz = (m) => 440 * Math.pow(2, (m - 69) / 12);
+const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* ------------------------------------------------------------------ */
+/* Bowed instrument geometry (same model as Hum to Play).              */
+/* 1 unit = 10 cm of violin. Strings run along +y, face is +z.         */
+/* ------------------------------------------------------------------ */
+const NUT_Y = 3.03, BRIDGE_Y = -0.25, SCALE_LEN = NUT_Y - BRIDGE_Y;
+const NUT_Z = 0.44, BOW_S = 0.88, BOW_LEN = 4.4;
+const STRINGS = [
+  { nutX: -0.08,  brX: -0.17,  brZ: 0.575, r: 0.014, color: 0xc7a26a, tilt: -0.30 },
+  { nutX: -0.027, brX: -0.057, brZ: 0.635, r: 0.012, color: 0xcdb791, tilt: -0.10 },
+  { nutX: 0.027,  brX: 0.057,  brZ: 0.635, r: 0.010, color: 0xd9d6cf, tilt: 0.10 },
+  { nutX: 0.08,   brX: 0.17,   brZ: 0.575, r: 0.008, color: 0xeceae6, tilt: 0.30 },
+];
+function stringPoint(i, s, out) {
+  const S = STRINGS[i];
+  return (out || new THREE.Vector3()).set(lerp(S.nutX, S.brX, s), NUT_Y - s * SCALE_LEN, lerp(NUT_Z, S.brZ, s));
+}
+const stopFraction = (n) => 1 - Math.pow(2, -clamp(n, 0, 26) / 12);
+
+/* ------------------------------------------------------------------ */
+/* The orchestra: sections, their players, and one shared brain         */
+/* ------------------------------------------------------------------ */
+const B = window.ConductorBrain;
+const MARKS = ["pp", "p", "mp", "mf", "f", "ff"];
+const markOf = (d) => MARKS[clamp(Math.round(d), 0, 5)];
+const SECTIONS = [
+  { id: "violins", name: "Violins", one: "Violin", kind: "bowed", open: [55, 62, 69, 76], names: ["G", "D", "A", "E"], range: [55, 100], home: 74, pos: [-4.4, 0, 0.9], riser: 0, scale: 0.5, pan: -0.55, n: 3 },
+  { id: "flute", name: "Flute", one: "Flute", kind: "flute", range: [60, 96], home: 79, pos: [-1.75, 0, -2.5], riser: 0.45, pan: -0.2, n: 1 },
+  { id: "brass", name: "Brass", one: "Trumpet", kind: "brass", range: [52, 84], home: 62, pos: [1.75, 0, -2.5], riser: 0.45, pan: 0.2, n: 2 },
+  { id: "cellos", name: "Cellos", one: "Cello", kind: "bowed", open: [36, 43, 50, 57], names: ["C", "G", "D", "A"], range: [36, 76], home: 50, pos: [4.4, 0, 0.9], riser: 0, scale: 0.8, pan: 0.55, n: 2 },
+];
+// Each player plays its own line. A section's line is what its players play
+// unless one of them has been told otherwise (a player override).
+SECTIONS.forEach((s, i) => {
+  Object.assign(s, {
+    index: i, dyn: 3, dynNow: 3, octave: 0, artic: "legato", muted: false,
+    part: null, prevPart: null, lines: null, live: false, capturing: false,
+    sounding: false, held: null, midi: s.home, level: 0, steady: 0, vis: 0,
+    string: 2, bowP: 0.5, bowDir: 1, inst: null, out: null, lastOnset: 0,
+  });
+  s.players = Array.from({ length: s.n }, (_, j) => ({
+    sec: s, j, name: s.n > 1 ? `${s.one} ${j + 1}` : s.one,
+    part: null, prevPart: null, muted: null, dyn: null, dynNow: 3, octave: 0, artic: null,
+    voice: null, gain: null, gainNow: -1, cur: -1, live: false,
+    sounding: false, held: null, midi: s.home, level: 0, steady: 0, onsets: 0, pan: 0,
+  }));
+});
+const PLAYERS = SECTIONS.flatMap((s) => s.players);
+const ALL = [0, 1, 2, 3];
+
+// who you're talking to: the whole orchestra, one section, or one player
+let target = { level: "section", sec: 0, p: null };
+let selected = 0; // the section in focus (for the readout and the 3D ring)
+
+const transport = { playing: false, beat: 0, bpm: 120, bpmTarget: 120, meter: 4, lastT: 0 };
+
+// The shared brain every section reads: key, tempo (in transport), the tune,
+// its chords, who leads, and how they should behave together.
+const hive = {
+  key: null, melody: null, chords: null, leader: 0,
+  mimic: true,        // by default the orchestra plays along with what you hum
+  autocorrect: true,  // snap your humming to the key and the beat
+  nextHum: null,      // "add" or "switch" from the last thing you said
+  armed: null,        // a player or section told "you play this"
+  energy: 0,          // how hard you're humming right now, shared with everyone
+  transpose: 0, plan: [],
+};
+const effMuted = (p) => (p.muted != null ? p.muted : p.sec.muted);
+const effDyn = (p) => (p.dyn != null ? p.dyn : p.sec.dyn);
+const effArtic = (p) => p.artic || p.sec.artic;
+const lineOf = (p) => p.part || (p.sec.lines && p.sec.lines[p.j]) || p.sec.part;
+const roleOf = (p) => (p.part ? "own line" : p.sec.lines && p.sec.lines.roles ? p.sec.lines.roles[p.j] : p.sec.part ? "section line" : null);
+
+/* ------------------------------------------------------------------ */
+/* Three.js scene                                                       */
+/* ------------------------------------------------------------------ */
+const stage = $("stage"), canvas = $("scene");
+let renderer = null;
+try { if (window.THREE) renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: "high-performance" }); } catch (e) { renderer = null; }
+let scene, camera, raycaster;
+const TARGET = window.THREE ? new THREE.Vector3(0, 1.5, -0.6) : null;
+const hitMeshes = [];
+let bodyCache = null; // shared violin body geometry
+
+if (renderer) {
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(30, 1, 0.1, 200);
+  raycaster = new THREE.Raycaster();
+  scene.add(new THREE.HemisphereLight(0xffe2c4, 0x1a0e08, 0.7));
+  const key = new THREE.DirectionalLight(0xfff0de, 1.15); key.position.set(-4, 9, 8); scene.add(key);
+  const rim = new THREE.DirectionalLight(0xff9a4a, 0.85); rim.position.set(5, 4, -6); scene.add(rim);
+  const fill = new THREE.PointLight(0xffb070, 0.45, 30); fill.position.set(0, 3, 6); scene.add(fill);
+  buildStage();
+  SECTIONS.forEach(buildSection);
+} else {
+  const msg = document.createElement("div");
+  msg.className = "nogl";
+  msg.textContent = "This browser can't draw the 3D stage. The sections, sound and commands still work.";
+  stage.appendChild(msg);
+}
+
+function glowTexture(stops) {
+  const c = document.createElement("canvas"); c.width = c.height = 128;
+  const g = c.getContext("2d");
+  const rg = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  stops.forEach(([o, col]) => rg.addColorStop(o, col));
+  g.fillStyle = rg; g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+}
+
+function buildStage() {
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(9, 64), new THREE.MeshStandardMaterial({ color: 0x21170f, roughness: 0.85 }));
+  floor.rotation.x = -Math.PI / 2; floor.position.y = -0.01; scene.add(floor);
+  // back-row riser
+  const riser = new THREE.Mesh(new THREE.CylinderGeometry(5.2, 5.2, 0.45, 64, 1, false, Math.PI * 0.62, Math.PI * 0.76),
+    new THREE.MeshStandardMaterial({ color: 0x2b1d13, roughness: 0.8 }));
+  riser.position.set(0, 0.225, 1.6); riser.scale.z = 0.95; scene.add(riser);
+  // podium edge, where you stand
+  const pod = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.95, 0.25, 40), new THREE.MeshStandardMaterial({ color: 0x3a2618, roughness: 0.6 }));
+  pod.position.set(0, 0.12, 4.6); scene.add(pod);
+}
+
+function rod(a, b, r, mat, seg) {
+  const dir = new THREE.Vector3().subVectors(b, a);
+  const len = dir.length();
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, seg || 10), mat);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+  m.position.copy(a).add(b).multiplyScalar(0.5);
+  return m;
+}
+
+function buildSection(s) {
+  const holder = new THREE.Group();
+  holder.position.set(s.pos[0], s.riser, s.pos[2]);
+  scene.add(holder);
+  s.holder = holder;
+  // pool of light that brightens with the section's sound
+  const pool = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 3.6), new THREE.MeshBasicMaterial({
+    map: glowTexture([[0, "rgba(255,170,90,0.9)"], [0.45, "rgba(255,130,50,0.35)"], [1, "rgba(255,110,40,0)"]]),
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.15,
+  }));
+  pool.rotation.x = -Math.PI / 2; pool.position.y = 0.012; holder.add(pool);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(1.42, 1.52, 64), new THREE.MeshBasicMaterial({ color: 0xf0a25a, transparent: true, opacity: 0, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.02; holder.add(ring);
+  s.pool = pool; s.ring = ring;
+  const stand = new THREE.MeshStandardMaterial({ color: 0x0d0b0a, roughness: 0.5, metalness: 0.3 });
+
+  if (s.kind === "bowed") {
+    const inst = buildBowed(s);
+    const isCello = s.open[0] < 50;
+    const bottom = 1.86 * s.scale;
+    if (isCello) {
+      inst.group.position.y = bottom + 0.42;
+      holder.add(rod(new THREE.Vector3(0, 0, 0.05), new THREE.Vector3(0, 0.45, 0), 0.02, stand, 6));
+      s.top = inst.group.position.y + 3.9 * s.scale;
+    } else {
+      inst.group.position.y = bottom + 1.0;
+      holder.add(rod(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 1.05, 0), 0.035, stand, 8));
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.4, 0.05, 20), stand); base.position.y = 0.025; holder.add(base);
+      s.top = inst.group.position.y + 3.9 * s.scale;
+    }
+    holder.add(inst.group);
+    s.inst = inst;
+  } else if (s.kind === "flute") {
+    s.inst = buildFlute();
+    s.inst.group.position.y = 1.9; holder.add(s.inst.group);
+    holder.add(rod(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 1.75, 0), 0.03, stand, 8));
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.36, 0.05, 20), stand); base.position.y = 0.025; holder.add(base);
+    s.top = 2.4;
+  } else {
+    s.inst = buildTrumpet();
+    s.inst.group.position.y = 1.75; holder.add(s.inst.group);
+    holder.add(rod(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 1.5, 0), 0.03, stand, 8));
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.36, 0.05, 20), stand); base.position.y = 0.025; holder.add(base);
+    s.top = 2.3;
+  }
+  // invisible hit target so a tap anywhere on the section selects it
+  const hit = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, s.top + 0.3, 16),
+    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, colorWrite: false }));
+  hit.position.y = (s.top + 0.3) / 2; hit.userData.section = s.index;
+  holder.add(hit); hitMeshes.push(hit);
+}
+
+function woodTexture(outline, dark) {
+  const W = 512, H = 860, X0 = -1.1, X1 = 1.1, Y0 = -1.86, Y1 = 1.86;
+  const c = document.createElement("canvas"); c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  const px = (x) => ((x - X0) / (X1 - X0)) * W;
+  const py = (y) => ((Y1 - y) / (Y1 - Y0)) * H;
+  const grad = g.createRadialGradient(px(0), py(-0.2), 40, px(0), py(-0.1), 470);
+  grad.addColorStop(0, dark ? "#a85a24" : "#c27330");
+  grad.addColorStop(0.55, dark ? "#7d3c16" : "#9a4f1f");
+  grad.addColorStop(1, dark ? "#3a1909" : "#4d220d");
+  g.fillStyle = grad; g.fillRect(0, 0, W, H);
+  let seed = dark ? 11 : 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let x = 0; x < W; x += 2 + rnd() * 5) {
+    g.strokeStyle = `rgba(40, 16, 4, ${0.06 + rnd() * 0.12})`;
+    g.lineWidth = 0.6 + rnd() * 1.4;
+    g.beginPath();
+    const wob = rnd() * 3;
+    g.moveTo(x, 0);
+    g.bezierCurveTo(x + wob, H * 0.33, x - wob, H * 0.66, x + wob * 0.5, H);
+    g.stroke();
+  }
+  const inset = (s) => {
+    g.beginPath();
+    outline.forEach((p, i) => (i ? g.lineTo : g.moveTo).call(g, px(p.x * s), py(p.y * (s + (1 - s) * 0.4))));
+    g.closePath();
+  };
+  g.lineWidth = 5; g.strokeStyle = "rgba(25, 10, 3, 0.7)"; inset(0.955); g.stroke();
+  g.lineWidth = 1.4; g.strokeStyle = "rgba(230, 190, 140, 0.35)"; inset(0.955); g.stroke();
+  g.fillStyle = "#170a04"; g.strokeStyle = "#170a04"; g.lineCap = "round";
+  [-1, 1].forEach((side) => {
+    const x = side * 0.40;
+    g.lineWidth = 0.032 * (W / 2.2);
+    g.beginPath();
+    g.moveTo(px(x + side * 0.05), py(0.26));
+    g.bezierCurveTo(px(x - side * 0.06), py(0.05), px(x + side * 0.07), py(-0.28), px(x - side * 0.04), py(-0.5));
+    g.stroke();
+    g.beginPath(); g.arc(px(x + side * 0.06), py(0.29), 0.042 * (W / 2.2), 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(px(x - side * 0.055), py(-0.53), 0.05 * (W / 2.2), 0, Math.PI * 2); g.fill();
+    g.lineWidth = 2.5;
+    g.beginPath(); g.moveTo(px(x - 0.035), py(-0.13)); g.lineTo(px(x + 0.035), py(-0.13)); g.stroke();
+  });
+  const tex = new THREE.CanvasTexture(c);
+  tex.encoding = THREE.sRGBEncoding;
+  tex.anisotropy = 4;
+  tex.repeat.set(1 / (X1 - X0), 1 / (Y1 - Y0));
+  tex.offset.set(-X0 / (X1 - X0), -Y0 / (Y1 - Y0));
+  return tex;
+}
+
+function buildBowed(s) {
+  const isCello = s.open[0] < 50;
+  const group = new THREE.Group();
+  group.scale.setScalar(s.scale);
+  const inst = { group, stringMats: [], ribbons: [], tilt: STRINGS[2].tilt, contactS: 2, lift: 0, isCello };
+
+  if (!bodyCache) {
+    const half = [[0,-1.78],[0.55,-1.7],[0.92,-1.38],[1.04,-0.88],[0.99,-0.47],[0.85,-0.24],[0.62,-0.15],[0.53,0.06],
+                  [0.61,0.29],[0.77,0.39],[0.87,0.72],[0.85,1.15],[0.67,1.55],[0.36,1.74],[0,1.79]];
+    const right = new THREE.SplineCurve(half.map((p) => new THREE.Vector2(p[0], p[1]))).getSpacedPoints(110);
+    const left = right.slice(1, -1).reverse().map((v) => new THREE.Vector2(-v.x, v.y));
+    const outline = right.concat(left);
+    const geo = new THREE.ExtrudeGeometry(new THREE.Shape(outline), {
+      depth: 0.3, bevelEnabled: true, bevelThickness: 0.07, bevelSize: 0.05, bevelSegments: 4, curveSegments: 1, steps: 1,
+    });
+    geo.translate(0, 0, -0.15);
+    bodyCache = { outline, geo };
+  }
+  const top = new THREE.MeshStandardMaterial({ map: woodTexture(bodyCache.outline, isCello), roughness: 0.38, metalness: 0.05 });
+  const ribs = new THREE.MeshStandardMaterial({ color: isCello ? 0x4a210c : 0x5e2c11, roughness: 0.45, metalness: 0.05 });
+  const body = new THREE.Mesh(bodyCache.geo, [top, ribs]);
+  if (isCello) body.scale.z = 2.2; // cellos are deep
+  group.add(body);
+
+  const maple = new THREE.MeshStandardMaterial({ color: 0x5a2a12, roughness: 0.45 });
+  const ebony = new THREE.MeshStandardMaterial({ color: 0x070605, roughness: 0.5, metalness: 0.05 });
+
+  const neck = new THREE.Mesh(new THREE.BoxGeometry(0.22, 1.35, 0.37), maple); neck.position.set(0, 2.37, 0.135); group.add(neck);
+  const pegbox = new THREE.Mesh(new THREE.BoxGeometry(0.21, 0.66, 0.3), maple); pegbox.position.set(0, 3.35, 0.14); group.add(pegbox);
+  const scroll = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.065, 12, 28), maple);
+  scroll.rotation.y = Math.PI / 2; scroll.position.set(0, 3.79, 0.14); group.add(scroll);
+  [3.13, 3.25, 3.37, 3.49].forEach((y, i) => {
+    const side = i % 2 ? 1 : -1;
+    const peg = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.022, 0.42, 10), ebony);
+    peg.rotation.z = Math.PI / 2; peg.position.set(side * 0.16, y, 0.15); group.add(peg);
+  });
+  const fbLen = 2.68;
+  const fbGeo = new THREE.ExtrudeGeometry(new THREE.Shape([
+    new THREE.Vector2(-0.125, 0), new THREE.Vector2(-0.215, -fbLen), new THREE.Vector2(0.215, -fbLen), new THREE.Vector2(0.125, 0),
+  ]), { depth: 0.08, bevelEnabled: true, bevelThickness: 0.01, bevelSize: 0.01, bevelSegments: 2 });
+  fbGeo.rotateX(-0.0485);
+  const fb = new THREE.Mesh(fbGeo, ebony); fb.position.set(0, NUT_Y, 0.31); group.add(fb);
+  const br = new THREE.Shape([
+    new THREE.Vector2(-0.22, 0), new THREE.Vector2(-0.13, 0), new THREE.Vector2(-0.12, 0.06), new THREE.Vector2(0.12, 0.06),
+    new THREE.Vector2(0.13, 0), new THREE.Vector2(0.22, 0), new THREE.Vector2(0.2, 0.3), new THREE.Vector2(0.12, 0.395),
+    new THREE.Vector2(0, 0.42), new THREE.Vector2(-0.12, 0.395), new THREE.Vector2(-0.2, 0.3),
+  ]);
+  const brGeo = new THREE.ExtrudeGeometry(br, { depth: 0.03, bevelEnabled: false }); brGeo.rotateX(Math.PI / 2);
+  const bridge = new THREE.Mesh(brGeo, new THREE.MeshStandardMaterial({ color: 0xdcbc8a, roughness: 0.6 }));
+  bridge.position.set(0, BRIDGE_Y + 0.015, 0.2); group.add(bridge);
+  const tp = new THREE.Shape([new THREE.Vector2(-0.2, 0), new THREE.Vector2(-0.09, -1.0), new THREE.Vector2(0.09, -1.0), new THREE.Vector2(0.2, 0)]);
+  const tail = new THREE.Mesh(new THREE.ExtrudeGeometry(tp, { depth: 0.05, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.02, bevelSegments: 2 }), ebony);
+  tail.position.set(0, -0.62, 0.3); group.add(tail);
+  if (isCello) {
+    // endpin down to the floor
+    group.add(rod(new THREE.Vector3(0, -1.86, 0), new THREE.Vector3(0, -2.4, 0.05), 0.025, new THREE.MeshStandardMaterial({ color: 0xbbbbbb, metalness: 0.7, roughness: 0.3 }), 8));
+  } else {
+    const chin = new THREE.Mesh(new THREE.SphereGeometry(0.42, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), ebony);
+    chin.scale.set(1, 0.6, 0.25); chin.rotation.x = Math.PI / 2; chin.position.set(-0.45, -1.42, 0.24); group.add(chin);
+  }
+
+  STRINGS.forEach((S, i) => {
+    const mat = new THREE.MeshStandardMaterial({ color: S.color, roughness: 0.35, metalness: 0.55, emissive: 0xff8a2a, emissiveIntensity: 0 });
+    const a = stringPoint(i, 0), b = stringPoint(i, 1);
+    group.add(rod(a, b, S.r * (isCello ? 1.3 : 1), mat, 8));
+    group.add(rod(b, new THREE.Vector3(S.brX * 0.55, -0.66, 0.4), S.r, mat, 8));
+    inst.stringMats.push(mat);
+  });
+  for (let k = 0; k < 2; k++) {
+    const N = 40;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array((N + 1) * 2 * 3), 3));
+    const idx = [];
+    for (let j = 0; j < N; j++) { const a = j * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    geo.setIndex(idx);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffa04a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false; mesh.userData.N = N;
+    group.add(mesh); inst.ribbons.push(mesh);
+  }
+  inst.fingerDot = new THREE.Mesh(new THREE.SphereGeometry(0.045, 14, 10), new THREE.MeshBasicMaterial({ color: 0xffb066 }));
+  group.add(inst.fingerDot);
+  inst.fingerGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowTexture([[0, "rgba(255,180,100,0.9)"], [0.35, "rgba(255,140,60,0.35)"], [1, "rgba(255,120,40,0)"]]),
+    blending: THREE.AdditiveBlending, depthWrite: false, transparent: true,
+  }));
+  inst.fingerGlow.scale.set(0.45, 0.45, 1);
+  group.add(inst.fingerGlow);
+  inst.fingerPos = stringPoint(2, 0);
+
+  // bow
+  const bow = new THREE.Group();
+  const hair = new THREE.Mesh(new THREE.BoxGeometry(BOW_LEN, 0.075, 0.012), new THREE.MeshStandardMaterial({ color: 0xf1e7d2, roughness: 0.8 }));
+  hair.position.set(BOW_LEN / 2, 0, 0.006); bow.add(hair);
+  const stickCurve = new THREE.CatmullRomCurve3([new THREE.Vector3(-0.2, 0, 0.2), new THREE.Vector3(BOW_LEN * 0.5, 0, 0.1), new THREE.Vector3(BOW_LEN + 0.02, 0, 0.15)]);
+  bow.add(new THREE.Mesh(new THREE.TubeGeometry(stickCurve, 50, 0.022, 8), new THREE.MeshStandardMaterial({ color: 0x5c2a14, roughness: 0.4 })));
+  const frog = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.1, 0.19), new THREE.MeshStandardMaterial({ color: 0x141110, roughness: 0.35 }));
+  frog.position.set(0.12, 0, 0.1); bow.add(frog);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.06, 0.17), new THREE.MeshStandardMaterial({ color: 0xe9dcc3, roughness: 0.5 }));
+  head.position.set(BOW_LEN + 0.02, 0, 0.08); bow.add(head);
+  group.add(bow);
+  inst.bow = bow;
+  return inst;
+}
+
+function buildFlute() {
+  const group = new THREE.Group();
+  const silver = new THREE.MeshStandardMaterial({ color: 0xdfe3e8, roughness: 0.22, metalness: 0.55, emissive: 0x88b8ff, emissiveIntensity: 0 });
+  const L = 3.3;
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, L, 18), silver);
+  tube.rotation.z = Math.PI / 2; group.add(tube);
+  const crown = new THREE.Mesh(new THREE.SphereGeometry(0.07, 14, 10), silver); crown.position.x = -L / 2; group.add(crown);
+  const lip = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.02, 0.12), silver); lip.position.set(-L / 2 + 0.45, 0.06, 0); group.add(lip);
+  [-0.25, 0.75].forEach((x) => { const band = new THREE.Mesh(new THREE.CylinderGeometry(0.066, 0.066, 0.05, 18), silver); band.rotation.z = Math.PI / 2; band.position.x = x; group.add(band); });
+  const keyMat = new THREE.MeshStandardMaterial({ color: 0xeef1f4, roughness: 0.2, metalness: 0.5 });
+  const keys = [];
+  for (let i = 0; i < 7; i++) {
+    const k = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.025, 16), keyMat);
+    k.position.set(-0.05 + i * 0.22, 0.085, 0);
+    group.add(k); keys.push(k);
+  }
+  group.add(rod(new THREE.Vector3(-0.15, 0.07, 0.04), new THREE.Vector3(1.35, 0.07, 0.04), 0.008, keyMat, 6));
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowTexture([[0, "rgba(200,225,255,0.9)"], [0.4, "rgba(160,200,255,0.3)"], [1, "rgba(140,190,255,0)"]]),
+    blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0,
+  }));
+  glow.position.set(-L / 2 + 0.45, 0.1, 0.05); glow.scale.set(0.7, 0.7, 1); group.add(glow);
+  group.rotation.z = 0.12;
+  return { group, keys, glow, mat: silver, closed: 0 };
+}
+
+function buildTrumpet() {
+  const group = new THREE.Group();
+  const brass = new THREE.MeshStandardMaterial({ color: 0xd6a548, roughness: 0.3, metalness: 0.55, emissive: 0xff9a40, emissiveIntensity: 0 });
+  // bell along +z, opening toward you
+  const prof = [];
+  for (let i = 0; i <= 24; i++) {
+    const t = i / 24;
+    prof.push(new THREE.Vector2(0.045 + 0.32 * Math.pow(t, 3.2), t * 1.0));
+  }
+  const bellGeo = new THREE.LatheGeometry(prof, 32);
+  bellGeo.rotateX(Math.PI / 2);
+  const bellMat = brass.clone(); bellMat.side = THREE.DoubleSide;
+  const bell = new THREE.Mesh(bellGeo, bellMat); bell.position.set(0, 0.1, 0.35); group.add(bell);
+  group.add(rod(new THREE.Vector3(0, 0.1, -0.85), new THREE.Vector3(0, 0.1, 0.36), 0.045, brass, 14));     // upper tube
+  group.add(rod(new THREE.Vector3(0, -0.14, -0.85), new THREE.Vector3(0, -0.14, 0.35), 0.04, brass, 14));  // lower tube
+  const bend = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.042, 10, 20, Math.PI), brass);
+  bend.rotation.y = Math.PI / 2; bend.rotation.x = Math.PI; bend.position.set(0, -0.02, -0.85); group.add(bend);
+  const bend2 = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.04, 10, 20, Math.PI), brass);
+  bend2.rotation.y = -Math.PI / 2; bend2.position.set(0, -0.02, 0.35); bend2.scale.set(1, 1, 1); group.add(bend2);
+  const mouth = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.07, 0.25, 14), brass);
+  mouth.rotation.x = Math.PI / 2; mouth.position.set(0, -0.14, 0.62); group.add(mouth);
+  const valves = [];
+  [-0.38, -0.22, -0.06].forEach((z) => {
+    const casing = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.42, 16), brass);
+    casing.position.set(0, 0, z); group.add(casing);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.04, 16), new THREE.MeshStandardMaterial({ color: 0xf5e4c0, roughness: 0.3, metalness: 0.4 }));
+    cap.position.set(0, 0.27, z); group.add(cap);
+    valves.push({ cap, down: 0 });
+  });
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowTexture([[0, "rgba(255,200,120,0.9)"], [0.4, "rgba(255,150,60,0.3)"], [1, "rgba(255,130,40,0)"]]),
+    blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0,
+  }));
+  glow.position.set(0, 0.1, 1.4); glow.scale.set(1.3, 1.3, 1); group.add(glow);
+  group.scale.setScalar(1.15);
+  return { group, valves, glow, mat: brass, bellMat };
+}
+
+/* framing */
+const dirTmp = window.THREE ? new THREE.Vector3() : null;
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  if (!renderer || !w || !h) return;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  const d = Math.max(6.6 / (t * camera.aspect), 3.6 / t) + 1.5;
+  dirTmp.set(0, 0.5, 1).normalize();
+  camera.position.copy(TARGET).addScaledVector(dirTmp, d);
+  camera.lookAt(TARGET);
+  camera.updateProjectionMatrix();
+  SECTIONS.forEach((s) => {
+    if (!s.holder) return;
+    s.holder.rotation.y = Math.atan2(camera.position.x - s.pos[0], camera.position.z - s.pos[2]);
+  });
+}
+/* ------------------------------------------------------------------ */
+/* Who you're talking to: everyone, a section, or one player             */
+/* ------------------------------------------------------------------ */
+const labelEls = [], rowEls = [], dotEls = [];
+SECTIONS.forEach((s, i) => {
+  const wrap = document.createElement("div");
+  wrap.className = "label";
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "ln";
+  b.innerHTML = `<span>${s.name}</span><span class="lm">mf</span>`;
+  b.addEventListener("click", () => select(i));
+  wrap.appendChild(b);
+  const dots = [];
+  if (s.n > 1) {
+    const d = document.createElement("span"); d.className = "dots";
+    s.players.forEach((p) => {
+      const x = document.createElement("button");
+      x.type = "button"; x.className = "pdot"; x.setAttribute("aria-label", p.name);
+      x.title = p.name;
+      x.addEventListener("click", () => selectPlayer(i, p.j));
+      d.appendChild(x); dots.push(x);
+    });
+    wrap.appendChild(d);
+  }
+  if (renderer) $("labels").appendChild(wrap);
+  labelEls.push(wrap); dotEls.push(dots);
+  const r = document.createElement("button");
+  r.type = "button"; r.className = "sec"; r.setAttribute("role", "radio");
+  r.innerHTML = `<span>${s.name}</span><span class="k">${i + 1} · <i class="km">mf</i></span>`;
+  r.addEventListener("click", () => select(i));
+  $("secRow").appendChild(r);
+  rowEls.push(r);
+});
+$("allBtn").addEventListener("click", () => selectAll());
+
+function retarget(t) {
+  if (capture) finalizePhrase();
+  target = t;
+  if (t.sec != null) selected = t.sec;
+  refreshPicker(); renderReadout(true);
+}
+function select(i) { retarget({ level: "section", sec: i, p: null }); }
+function selectPlayer(i, j) {
+  if (SECTIONS[i].n === 1) return select(i);
+  retarget({ level: "player", sec: i, p: j });
+}
+function selectAll() { retarget({ level: "orchestra", sec: null, p: null }); }
+const targetName = (t) => (t = t || target, t.level === "orchestra" ? "Everyone" : t.level === "player" ? SECTIONS[t.sec].players[t.p].name : SECTIONS[t.sec].name);
+
+function refreshPicker() {
+  const all = target.level === "orchestra";
+  $("allBtn").setAttribute("aria-checked", String(all));
+  SECTIONS.forEach((s, i) => {
+    const on = !all && target.sec === i;
+    labelEls[i].classList.toggle("sel", on && target.level === "section");
+    labelEls[i].classList.toggle("all", all);
+    labelEls[i].classList.toggle("muted", s.muted);
+    labelEls[i].classList.toggle("live", s.live || s.players.some((p) => p.live));
+    labelEls[i].classList.toggle("lead", !!hive.melody && hive.leader === i);
+    rowEls[i].setAttribute("aria-checked", String(on));
+    const m = markOf(s.dyn);
+    const lm = labelEls[i].querySelector(".lm");
+    if (lm.textContent !== m) lm.textContent = m;
+    const km = rowEls[i].querySelector(".km");
+    const t = s.muted ? "rest" : m;
+    if (km.textContent !== t) km.textContent = t;
+    dotEls[i].forEach((d, j) => {
+      const p = s.players[j];
+      d.classList.toggle("sel", target.level === "player" && target.sec === i && target.p === j);
+      d.classList.toggle("muted", effMuted(p));
+      d.classList.toggle("own", !!p.part);
+    });
+  });
+  // the row of individual players for the section in focus
+  const row = $("playerRow");
+  const s = SECTIONS[selected];
+  const want = all || s.n === 1 ? "" : s.id + ":" + s.players.map((p) => +!!p.part + "" + +effMuted(p)).join("") + ":" + (target.level === "player" ? target.p : "-");
+  if (row.dataset.k !== want) {
+    row.dataset.k = want; row.innerHTML = "";
+    if (want) {
+      const mk = (label, on, fn, extra) => {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "pchip" + (extra || ""); b.textContent = label;
+        b.setAttribute("aria-pressed", String(on)); b.addEventListener("click", fn); row.appendChild(b);
+      };
+      mk(`All ${s.name.toLowerCase()}`, target.level === "section", () => select(s.index));
+      s.players.forEach((p) => mk(p.name, target.level === "player" && target.p === p.j, () => selectPlayer(s.index, p.j), (p.part ? " own" : "") + (effMuted(p) ? " rest" : "")));
+    }
+  }
+  const tm = target.level === "orchestra" ? false : target.level === "player" ? effMuted(SECTIONS[target.sec].players[target.p]) : SECTIONS[target.sec].muted;
+  $("restChip").textContent = tm ? "Come in" : "Rest";
+  $("cmdInput").placeholder = target.level === "orchestra" ? "Try: everyone softer" : target.level === "player" ? "Try: you play this" : `Try: ${SECTIONS[target.sec].name.toLowerCase()} louder`;
+}
+
+let down = null;
+canvas.addEventListener("pointerdown", (e) => { down = { x: e.clientX, y: e.clientY }; });
+canvas.addEventListener("pointerup", (e) => {
+  if (!down || !renderer) return;
+  const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+  down = null;
+  if (moved > 10) return;
+  const r = canvas.getBoundingClientRect();
+  const p = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  raycaster.setFromCamera(p, camera);
+  const hits = raycaster.intersectObjects(hitMeshes, false);
+  if (hits.length) select(hits[0].object.userData.section);
+  else selectAll(); // tapping the empty stage talks to everyone
+});
+
+/* ------------------------------------------------------------------ */
+/* Sound: one voice per section into a shared hall                     */
+/* ------------------------------------------------------------------ */
+let soundOn = true;
+let ctx = null, analyser = null, timeBuf = null, eng = null;
+
+function makeEngine(c) {
+  const master = c.createGain(); master.gain.value = soundOn ? 0.8 : 0; master.connect(c.destination);
+  const comp = c.createDynamicsCompressor(); comp.threshold.value = -16; comp.ratio.value = 3.5; comp.connect(master);
+  const verb = c.createConvolver();
+  const len = Math.floor(c.sampleRate * 2.6), ir = c.createBuffer(2, len, c.sampleRate);
+  for (let ch = 0; ch < 2; ch++) { const d = ir.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
+  verb.buffer = ir;
+  const wet = c.createGain(); wet.gain.value = 0.24; verb.connect(wet); wet.connect(comp);
+  const nb = c.createBuffer(1, c.sampleRate * 2, c.sampleRate);
+  const nd = nb.getChannelData(0); for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+  return { master, comp, verb, noise: nb };
+}
+
+function sectionOut(c, s) {
+  const out = c.createGain(); out.gain.value = 0;
+  let node = out;
+  if (c.createStereoPanner) { const p = c.createStereoPanner(); p.pan.value = s.pan; out.connect(p); node = p; }
+  node.connect(eng.comp);
+  const send = c.createGain(); send.gain.value = 0.9; node.connect(send); send.connect(eng.verb);
+  return out;
+}
+function noiseSrc(c) { const n = c.createBufferSource(); n.buffer = eng.noise; n.loop = true; n.start(); return n; }
+
+function bowedVoice(c, out, P) {
+  const amp = c.createGain(); amp.gain.value = 0; amp.connect(out);
+  const hp = c.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = P.hp; hp.Q.value = 0.7;
+  const lp = c.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 3000; lp.Q.value = 0.8;
+  const b1 = c.createBiquadFilter(); b1.type = "peaking"; b1.frequency.value = P.b1; b1.Q.value = 1.3; b1.gain.value = 5;
+  const b2 = c.createBiquadFilter(); b2.type = "peaking"; b2.frequency.value = P.b2; b2.Q.value = 1.1; b2.gain.value = 6;
+  const shelf = c.createBiquadFilter(); shelf.type = "highshelf"; shelf.frequency.value = P.shelf; shelf.gain.value = -10;
+  hp.connect(lp); lp.connect(b1); b1.connect(b2); b2.connect(shelf); shelf.connect(amp);
+  const mix = c.createGain(); mix.gain.value = 0.3; mix.connect(hp);
+  const o1 = c.createOscillator(); o1.type = "sawtooth";
+  const o2 = c.createOscillator(); o2.type = "sawtooth"; o2.detune.value = 6;
+  o1.connect(mix); o2.connect(mix);
+  const lfo = c.createOscillator(); lfo.frequency.value = P.vibHz;
+  const vib = c.createGain(); vib.gain.value = 0; lfo.connect(vib); vib.connect(o1.detune); vib.connect(o2.detune);
+  const nbp = c.createBiquadFilter(); nbp.type = "bandpass"; nbp.frequency.value = 2500; nbp.Q.value = 0.8;
+  const ng = c.createGain(); ng.gain.value = 0;
+  noiseSrc(c).connect(nbp); nbp.connect(ng); ng.connect(lp);
+  o1.start(); o2.start(); lfo.start();
+  return {
+    play(freq, level, onset, steady) {
+      const t = c.currentTime;
+      o1.frequency.setTargetAtTime(freq, t, onset ? 0.01 : 0.03);
+      o2.frequency.setTargetAtTime(freq, t, onset ? 0.01 : 0.03);
+      amp.gain.setTargetAtTime(0.18 + 0.62 * level, t, onset ? 0.015 : 0.04);
+      lp.frequency.setTargetAtTime(P.lpBase + P.lpRange * level, t, 0.05);
+      nbp.frequency.setTargetAtTime(clamp(freq * 4, 600, 7000), t, 0.05);
+      if (onset) { ng.gain.setValueAtTime(0.2, t); ng.gain.setTargetAtTime(0.025 + 0.05 * level, t + 0.012, 0.03); }
+      else ng.gain.setTargetAtTime(0.025 + 0.05 * level, t, 0.05);
+      vib.gain.setTargetAtTime(steady > 0.28 ? P.vib : 0, t, 0.18);
+    },
+    silence() {
+      const t = c.currentTime;
+      amp.gain.setTargetAtTime(0, t, 0.06); ng.gain.setTargetAtTime(0, t, 0.03); vib.gain.setTargetAtTime(0, t, 0.05);
+    },
+  };
+}
+
+function brassVoice(c, out) {
+  const amp = c.createGain(); amp.gain.value = 0; amp.connect(out);
+  const lp = c.createBiquadFilter(); lp.type = "lowpass"; lp.Q.value = 1.4; lp.frequency.value = 1200; lp.connect(amp);
+  const shaper = c.createWaveShaper();
+  const curve = new Float32Array(1024);
+  for (let i = 0; i < 1024; i++) { const x = (i / 1023) * 2 - 1; curve[i] = Math.tanh(2.2 * x); }
+  shaper.curve = curve; shaper.connect(lp);
+  const mix = c.createGain(); mix.gain.value = 0.32; mix.connect(shaper);
+  const o1 = c.createOscillator(); o1.type = "sawtooth";
+  const o2 = c.createOscillator(); o2.type = "sawtooth"; o2.detune.value = -5;
+  o1.connect(mix); o2.connect(mix);
+  const lfo = c.createOscillator(); lfo.frequency.value = 5;
+  const vib = c.createGain(); vib.gain.value = 0; lfo.connect(vib); vib.connect(o1.detune); vib.connect(o2.detune);
+  o1.start(); o2.start(); lfo.start();
+  return {
+    play(freq, level, onset, steady) {
+      const t = c.currentTime;
+      const cut = clamp(freq * (1.6 + 7 * level), 300, 9000);
+      o1.frequency.setTargetAtTime(freq, t, onset ? 0.008 : 0.03);
+      o2.frequency.setTargetAtTime(freq, t, onset ? 0.008 : 0.03);
+      if (onset) {
+        // a brass attack starts dark and slightly flat, then blooms
+        lp.frequency.setValueAtTime(freq * 1.1, t); lp.frequency.setTargetAtTime(cut, t + 0.004, 0.05);
+        o1.detune.setValueAtTime(-30, t); o1.detune.setTargetAtTime(0, t, 0.03);
+        amp.gain.setTargetAtTime(0.14 + 0.5 * level, t, 0.02);
+      } else {
+        lp.frequency.setTargetAtTime(cut, t, 0.08);
+        amp.gain.setTargetAtTime(0.14 + 0.5 * level, t, 0.05);
+      }
+      vib.gain.setTargetAtTime(steady > 0.5 ? 6 : 0, t, 0.25);
+    },
+    silence() { const t = c.currentTime; amp.gain.setTargetAtTime(0, t, 0.05); vib.gain.setTargetAtTime(0, t, 0.05); },
+  };
+}
+
+function fluteVoice(c, out) {
+  const amp = c.createGain(); amp.gain.value = 0; amp.connect(out);
+  const lp = c.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 5200; lp.Q.value = 0.5; lp.connect(amp);
+  const o1 = c.createOscillator(); o1.type = "sine";
+  const o2 = c.createOscillator(); o2.type = "triangle";
+  const o3 = c.createOscillator(); o3.type = "sine";
+  const g1 = c.createGain(); g1.gain.value = 0.42; const g2 = c.createGain(); g2.gain.value = 0.07; const g3 = c.createGain(); g3.gain.value = 0.08;
+  o1.connect(g1); o2.connect(g2); o3.connect(g3); g1.connect(lp); g2.connect(lp); g3.connect(lp);
+  const lfo = c.createOscillator(); lfo.frequency.value = 5.2;
+  const vib = c.createGain(); vib.gain.value = 0; lfo.connect(vib); vib.connect(o1.detune); vib.connect(o2.detune); vib.connect(o3.detune);
+  const nbp = c.createBiquadFilter(); nbp.type = "bandpass"; nbp.Q.value = 1.2; nbp.frequency.value = 2000;
+  const ng = c.createGain(); ng.gain.value = 0;
+  noiseSrc(c).connect(nbp); nbp.connect(ng); ng.connect(lp);
+  o1.start(); o2.start(); o3.start(); lfo.start();
+  return {
+    play(freq, level, onset, steady) {
+      const t = c.currentTime;
+      [o1, o2].forEach((o) => o.frequency.setTargetAtTime(freq, t, onset ? 0.01 : 0.03));
+      o3.frequency.setTargetAtTime(freq * 2, t, onset ? 0.01 : 0.03);
+      nbp.frequency.setTargetAtTime(clamp(freq * 2, 1200, 8000), t, 0.05);
+      amp.gain.setTargetAtTime(0.2 + 0.55 * level, t, onset ? 0.035 : 0.05);
+      g3.gain.setTargetAtTime(0.04 + 0.12 * level, t, 0.06);
+      if (onset) { ng.gain.setValueAtTime(0.28, t); ng.gain.setTargetAtTime(0.02 + 0.04 * level, t + 0.02, 0.04); }
+      else ng.gain.setTargetAtTime(0.02 + 0.04 * level, t, 0.06);
+      vib.gain.setTargetAtTime(steady > 0.35 ? 11 : 0, t, 0.2);
+    },
+    silence() { const t = c.currentTime; amp.gain.setTargetAtTime(0, t, 0.05); ng.gain.setTargetAtTime(0, t, 0.03); vib.gain.setTargetAtTime(0, t, 0.05); },
+  };
+}
+function ensureCtx() {
+  if (!ctx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) throw new Error("noaudio");
+    ctx = new AC();
+    eng = makeEngine(ctx);
+    analyser = ctx.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0;
+    timeBuf = new Float32Array(analyser.fftSize);
+    const sink = ctx.createGain(); sink.gain.value = 0; analyser.connect(sink); sink.connect(ctx.destination);
+    // a tap that keeps the last few seconds of your voice, for the speech model
+    if (ctx.createScriptProcessor) {
+      tap = ctx.createScriptProcessor(4096, 1, 1);
+      tapBuf = new Float32Array(Math.floor(ctx.sampleRate * 8));
+      tap.onaudioprocess = (e) => {
+        const x = e.inputBuffer.getChannelData(0);
+        for (let i = 0; i < x.length; i++) { tapBuf[tapPos % tapBuf.length] = x[i]; tapPos++; }
+      };
+      analyser.connect(tap); tap.connect(sink);
+    }
+    SECTIONS.forEach((s) => {
+      s.out = sectionOut(ctx, s);
+      s.players.forEach((p) => {
+        p.gain = ctx.createGain(); p.gain.gain.value = 0;
+        let node = p.gain;
+        // players in a section sit slightly apart in the stereo field
+        if (s.n > 1 && ctx.createStereoPanner) { const pn = ctx.createStereoPanner(); pn.pan.value = (p.j - (s.n - 1) / 2) * 0.22; p.gain.connect(pn); node = pn; }
+        node.connect(s.out);
+        const out = p.gain;
+        if (s.kind === "brass") p.voice = brassVoice(ctx, out);
+        else if (s.kind === "flute") p.voice = fluteVoice(ctx, out);
+        else if (s.open[0] < 50) p.voice = bowedVoice(ctx, out, { hp: 45, b1: 220, b2: 1300, shelf: 3200, lpBase: 700, lpRange: 2600, vib: 11 + p.j * 2, vibHz: 5.0 + p.j * 0.31 });
+        else p.voice = bowedVoice(ctx, out, { hp: 160, b1: 470, b2: 2900, shelf: 5200, lpBase: 1500, lpRange: 5200, vib: 13 + p.j * 2, vibHz: 5.6 + p.j * 0.27 });
+      });
+      s.out.gain.value = 1;
+    });
+    transport.lastT = ctx.currentTime;
+  }
+  if (ctx.state === "suspended") ctx.resume();
+  return ctx;
+}
+let tap = null, tapBuf = null, tapPos = 0;
+
+/* one player plays one note (from your voice or from its line) */
+function chooseString(s, m) {
+  const cur = s.string;
+  if (cur != null) { const n = m - s.open[cur]; if (n >= 0 && n <= 7) return cur; }
+  let k = 0;
+  for (let i = 0; i < 4; i++) if (s.open[i] <= m) k = i;
+  return k;
+}
+function drive(p, midi, level, onset, dt) {
+  if (onset || !p.sounding) {
+    onset = true;
+    p.held = Math.round(midi); p.midi = midi; p.steady = 0; p.onsets++;
+  } else { p.midi += (midi - p.midi) * 0.35; p.steady += dt; }
+  p.level += (level - p.level) * 0.3;
+  p.sounding = true;
+  if (p.voice) p.voice.play(hz(p.midi), clamp(level, 0, 1), onset, p.steady);
+}
+function rest(p) {
+  if (p.sounding && p.voice) p.voice.silence();
+  p.sounding = false;
+}
+function restSection(s) { s.players.forEach(rest); }
+// pp is about -16 dB, ff about +7 dB against mf
+const dynGain = (d) => 0.55 * Math.pow(10, ((d - 3) * 4.6) / 20);
+
+/* ------------------------------------------------------------------ */
+/* Transport and every player's loop                                     */
+/* ------------------------------------------------------------------ */
+function startTransport() {
+  if (!ctx) return;
+  transport.playing = true; transport.beat = 0; transport.lastT = ctx.currentTime;
+  PLAYERS.forEach((p) => { p.cur = -1; });
+  SECTIONS.forEach((s) => {
+    if (s.part) s.part.anchor = 0;
+    if (s.lines) s.lines.forEach((l) => l && (l.anchor = 0));
+    s.players.forEach((p) => { if (p.part) p.part.anchor = 0; });
+  });
+  updateButtons();
+}
+function stopTransport() {
+  transport.playing = false;
+  hive.plan.length = 0;
+  PLAYERS.forEach((p) => { if (!p.live) rest(p); p.cur = -1; });
+  updateButtons();
+}
+const anyLine = () => SECTIONS.some((s) => s.part || s.lines || s.players.some((p) => p.part));
+
+// how the hive balances itself: the tune sits on top, the backing makes room,
+// and while you hum live everyone else leans back to listen
+function hiveOffset(p) {
+  let o = 0;
+  const s = p.sec;
+  if (hive.melody && s.lines && s.lines.roles) {
+    const r = s.lines.roles[p.j];
+    if (r === "melody") o += 0.35;
+    else if (r === "pad" || r === "pad2") o -= 0.55;
+    else if (r === "third" || r === "below" || r === "echo") o -= 0.25;
+  }
+  const someoneLive = PLAYERS.some((x) => x.live);
+  if (someoneLive && !p.live) o -= 0.6 - 0.5 * hive.energy;
+  return o;
+}
+
+function tick(dt) {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const d = clamp(t - transport.lastT, 0, 0.1);
+  transport.lastT = t;
+  transport.bpm += (transport.bpmTarget - transport.bpm) * ease(d || dt, 0.9);
+  if (transport.playing) transport.beat += d * transport.bpm / 60;
+  // scheduled moves (a build-up, a swell) happen on their beat
+  while (hive.plan.length && transport.playing && transport.beat >= hive.plan[0].beat) {
+    const step = hive.plan.shift();
+    try { step.run(); } catch (e) {}
+    if (step.say) flash(null, step.say);
+    refreshPicker();
+  }
+  SECTIONS.forEach((s) => { s.dynNow += (s.dyn - s.dynNow) * ease(dt, 0.45); });
+  PLAYERS.forEach((p) => {
+    const s = p.sec;
+    p.dynNow += (effDyn(p) + hiveOffset(p) - p.dynNow) * ease(dt, 0.45);
+    const muted = effMuted(p) && !p.live;
+    const g = muted ? 0 : dynGain(p.dynNow) / Math.sqrt(s.n);
+    if (p.gain && Math.abs(g - p.gainNow) > 0.002) { p.gain.gain.setTargetAtTime(g, t, 0.12); p.gainNow = g; }
+    if (p.live || (s.capturing && (target.level !== "player" || target.p === p.j))) return;
+    const P = lineOf(p);
+    if (!transport.playing || !P || muted || transport.beat < P.anchor) { rest(p); p.cur = -1; return; }
+    const rel = transport.beat - P.anchor;
+    const lap = Math.floor(rel / P.len), lb = rel - lap * P.len;
+    let idx = -1;
+    const stacc = effArtic(p) === "staccato";
+    for (let i = 0; i < P.notes.length; i++) {
+      const n = P.notes[i];
+      const len = stacc ? Math.min(n.d * 0.5, 0.4) : n.d * 0.97;
+      if (lb >= n.b && lb < n.b + len) { idx = i; break; }
+    }
+    if (idx < 0) { rest(p); p.cur = -1; return; }
+    const key = lap * 10000 + idx;
+    const onset = key !== p.cur;
+    p.cur = key;
+    const oct = 12 * (s.octave + p.octave);
+    drive(p, P.notes[idx].m + oct + hive.transpose, 0.2 + 0.16 * p.dynNow, onset, dt);
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Your voice: pitch detection (YIN)                                     */
+/* ------------------------------------------------------------------ */
+
+const YIN_W = 1024;
+let yinD = new Float32Array(1100);
+function yin(buf, sr) {
+  const tauMin = Math.max(2, Math.floor(sr / 1500));
+  const tauMax = Math.min(Math.floor(sr / 62), buf.length - YIN_W - 2);
+  if (yinD.length < tauMax + 2) yinD = new Float32Array(tauMax + 2);
+  const d = yinD;
+  d[0] = 1;
+  let running = 0;
+  for (let tau = 1; tau <= tauMax; tau++) {
+    let sum = 0;
+    for (let i = 0; i < YIN_W; i++) { const v = buf[i] - buf[i + tau]; sum += v * v; }
+    running += sum;
+    d[tau] = running > 0 ? (sum * tau) / running : 1;
+  }
+  let tau = -1;
+  for (let t = tauMin; t < tauMax; t++) {
+    if (d[t] < 0.15) { while (t + 1 < tauMax && d[t + 1] < d[t]) t++; tau = t; break; }
+  }
+  if (tau < 0) {
+    let best = tauMin;
+    for (let t = tauMin; t < tauMax; t++) if (d[t] < d[best]) best = t;
+    if (d[best] > 0.3) return null;
+    tau = best;
+  }
+  const a = d[tau - 1], b = d[tau], c = d[tau + 1] !== undefined ? d[tau + 1] : b;
+  const den = a + c - 2 * b;
+  const shift = den ? (a - c) / (2 * den) : 0;
+  return { freq: sr / (tau + clamp(shift, -1, 1)), clarity: 1 - b };
+}
+
+/* ------------------------------------------------------------------ */
+/* Listening: is that humming or talking? Then play it or understand it */
+/* ------------------------------------------------------------------ */
+const hum = { sounding: false, held: null, change: 0, hist: [], shift: 0, midi: 60, level: 0, silentFrames: 99, noise: 0.004 };
+let mode = null; // "mic" | "file"
+let micStream = null, srcNodes = [], wakeLock = null;
+let capture = null; // the phrase you're humming right now
+let utt = null;     // the current stretch of sound: humming, talking, or not decided yet
+let talking = false, talkTail = 0;
+
+function closeNote(c) {
+  if (c && c.cur) { c.cur.dur = ctx.currentTime - c.t0 - c.cur.t; c.cur = null; }
+}
+// which players sing along live while you hum to a target
+function livePlayersFor(t) {
+  if (t.level === "player") return [SECTIONS[t.sec].players[t.p]];
+  const s = t.level === "orchestra" ? SECTIONS[hive.leader] : SECTIONS[t.sec];
+  return [s.players[0]];
+}
+function captureSection(t) { return t.level === "orchestra" ? hive.leader : t.sec; }
+
+function startCapture(silent) {
+  const t = { ...target };
+  const si = captureSection(t);
+  const s = SECTIONS[si];
+  capture = {
+    tgt: t, sec: si, t0: ctx.currentTime, notes: [], cur: null, silent: 0, quiet: !!silent,
+    startBeat: transport.playing ? transport.beat : 0, live: livePlayersFor(t),
+  };
+  s.capturing = true;
+  if (!silent) goLive();
+  return capture;
+}
+function goLive() {
+  if (!capture) return;
+  capture.quiet = false;
+  const s = SECTIONS[capture.sec];
+  capture.live.forEach((p) => { p.live = true; });
+  s.live = true;
+  if (capture.tgt.level !== "player") s.muted = false;
+  refreshPicker();
+}
+function dropCapture() {
+  if (!capture) return;
+  const s = SECTIONS[capture.sec];
+  capture.live.forEach((p) => { p.live = false; rest(p); });
+  s.live = false; s.capturing = false;
+  capture = null; hum.sounding = false; hum.hist.length = 0;
+  refreshPicker();
+}
+
+function analyse(dt) {
+  analyser.getFloatTimeDomainData(timeBuf);
+  if (talking || performance.now() < talkTail) {
+    // push-to-talk: words aren't notes, don't play speech into the orchestra
+    if (capture) dropCapture();
+    utt = null;
+    return;
+  }
+  let sum = 0, zc = 0;
+  for (let i = 0; i < timeBuf.length; i++) {
+    sum += timeBuf[i] * timeBuf[i];
+    if (i && (timeBuf[i] >= 0) !== (timeBuf[i - 1] >= 0)) zc++;
+  }
+  const rms = Math.sqrt(sum / timeBuf.length);
+  const zcr = zc / timeBuf.length;
+  if (mode === "mic") {
+    if (rms < hum.noise * 1.5) hum.noise = hum.noise * 0.95 + rms * 0.05;
+    else hum.noise *= 1.0008;
+    hum.noise = clamp(hum.noise, 0.0008, 0.05);
+  }
+  const gate = mode === "mic" ? Math.max(0.004, hum.noise * 2.4) : 0.01;
+  const active = rms > gate;
+  let midi = null, clarity = 0;
+  if (active) {
+    const r = yin(timeBuf, ctx.sampleRate);
+    if (r && r.freq > 62 && r.freq < 1500) { midi = 69 + 12 * Math.log2(r.freq / 440); clarity = r.clarity; }
+  }
+  const voiced = midi != null && clarity > 0.8;
+
+  // a new stretch of sound begins: decide what it is in its first moments
+  if (!utt && active) {
+    const smart = mode === "mic" && smartListen;
+    utt = { t0: ctx.currentTime, frames: [], kind: smart ? "pending" : "hum", startSample: tapPos - Math.floor(ctx.sampleRate * 0.25), silent: 0 };
+  }
+  if (utt) {
+    utt.frames.push({ rms, zcr, voiced, midi, active, dt });
+    if (utt.kind === "pending") {
+      const act = utt.frames.filter((f) => f.active).length * dt;
+      const v = B.classifyVoice(utt.frames);
+      if ((act >= 0.35 && v.kind !== "unsure") || act >= 0.8) {
+        utt.kind = v.p >= 0.5 ? "speech" : "hum";
+        utt.p = v.p;
+        if (utt.kind === "speech") { dropCapture(); showHeard("Listening…", "Sounds like talking"); loadASR(); }
+        else goLive();
+      }
+    }
+    if (utt.kind === "speech") {
+      utt.silent = active ? 0 : utt.silent + dt;
+      if (utt.silent > 0.65 || ctx.currentTime - utt.t0 > 7) { finishSpeech(utt); utt = null; }
+      return;
+    }
+    if (!active && !capture) { utt.silent += dt; if (utt.silent > 0.6) utt = null; }
+  }
+
+  if (midi == null) {
+    hum.silentFrames++;
+    if (hum.sounding && hum.silentFrames > 3) {
+      hum.sounding = false;
+      closeNote(capture);
+      if (capture) capture.live.forEach(rest);
+    }
+    if (capture && !hum.sounding) {
+      capture.silent += dt;
+      if (capture.silent > 1.2) { finalizePhrase(); utt = null; }
+    }
+    if (!capture) hive.energy *= 0.95;
+    return;
+  }
+  hum.silentFrames = 0;
+  hum.hist.push(midi); if (hum.hist.length > 5) hum.hist.shift();
+  const med = hum.hist.slice().sort((a, b) => a - b)[hum.hist.length >> 1];
+  if (!capture) {
+    // fit your register to the section once per phrase: cellos go low, flute goes high
+    const s = SECTIONS[captureSection(target)];
+    let sh = Math.round((s.home - med) / 12) * 12;
+    while (med + sh < s.range[0]) sh += 12;
+    while (med + sh > s.range[1]) sh -= 12;
+    hum.shift = sh;
+    startCapture(utt && utt.kind === "pending");
+  }
+  const played = med + hum.shift;
+  // with auto-correct on and a key already set, live notes land on the key too
+  const snap = hive.autocorrect && hive.key ? B.snapToKey(played, hive.key) : Math.round(played);
+  let onset = false;
+  if (!hum.sounding) { onset = true; hum.sounding = true; hum.held = snap; hum.midi = played; hum.change = 0; }
+  else if (snap !== hum.held) { if (++hum.change >= 3) { hum.held = snap; hum.change = 0; onset = true; } }
+  else hum.change = 0;
+  const aim = hive.autocorrect && hive.key ? hum.held + (played - Math.round(played)) * 0.25 : played;
+  hum.midi += (aim - hum.midi) * (onset ? 1 : 0.35);
+  const lvl = clamp((20 * Math.log10(rms / gate) - 2) / 28, 0, 1);
+  hum.level += (lvl - hum.level) * 0.3;
+  hive.energy += (hum.level - hive.energy) * 0.1;
+
+  capture.silent = 0;
+  if (onset) {
+    closeNote(capture);
+    capture.cur = { t: ctx.currentTime - capture.t0, m: hum.held, sum: 0, n: 0, dur: 0 };
+    capture.notes.push(capture.cur);
+  }
+  if (capture.cur) { capture.cur.sum += played; capture.cur.n++; }
+  if (!capture.quiet) {
+    capture.live.forEach((p) => {
+      const s = p.sec;
+      drive(p, hum.midi + 12 * (s.octave + p.octave), clamp(hum.level * 0.65 + (p.dynNow / 5) * 0.35, 0, 1), onset, dt);
+    });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Turning a hummed phrase into music for the whole orchestra            */
+/* ------------------------------------------------------------------ */
+const LEAD_ROLES = { violins: ["melody", "below", "melody"], flute: ["melody"], brass: ["melody", "below"], cellos: ["melody", "bass"] };
+const BACK_ROLES = { violins: ["third", "pad", "pad2"], flute: ["third"], brass: ["pad", "pad2"], cellos: ["bass", "bass"] };
+function centerFor(s, role, j) {
+  if (role === "bass") return s.id === "cellos" ? 45 + 7 * j : s.home - 7;
+  if (role === "pad2") return s.home - 4;
+  if (role === "below") return s.home - 4;
+  return s.home;
+}
+function linesFor(s, roles, mel, chords, key, meter) {
+  let pad = null;
+  const lines = roles.map((r, j) => {
+    const notes = B.lineFor(r, mel, chords, key, meter, s.range, centerFor(s, r, j), r === "pad2" ? pad : null);
+    if (r === "pad") pad = notes;
+    return { notes, len: mel.len, anchor: mel.anchor || 0 };
+  });
+  lines.roles = roles.slice();
+  return lines;
+}
+// the hive arranges a tune: the leader plays it, everyone else finds a part
+function arrangeAll(mel, leader, key, meter) {
+  hive.melody = mel; hive.key = key; hive.leader = leader;
+  hive.chords = B.harmonize(mel, key, meter);
+  SECTIONS.forEach((s) => {
+    s.prevPart = s.part; s.prevLines = s.lines; s.part = null;
+    const roles = (s.index === leader ? LEAD_ROLES : BACK_ROLES)[s.id];
+    s.lines = linesFor(s, roles, mel, hive.chords, key, meter);
+  });
+}
+// a section learns a line of its own: first player plays it, the others harmonize
+function voiceSection(s, part, key, meter) {
+  s.prevPart = s.part; s.prevLines = s.lines;
+  if (s.n === 1 || !key) { s.part = part; s.lines = null; return; }
+  const chords = B.harmonize(part, key, meter);
+  const roles = s.n === 3 ? ["melody", "below", "melody"] : ["melody", "below"];
+  s.part = null;
+  s.lines = linesFor(s, roles, part, chords, key, meter);
+}
+function clearAll() {
+  stopTransport();
+  SECTIONS.forEach((s) => {
+    s.prevPart = s.part; s.prevLines = s.lines; s.part = null; s.lines = null; s.muted = false; s.octave = 0;
+    s.players.forEach((p) => { p.prevPart = p.part; p.part = null; p.muted = null; p.dyn = null; p.octave = 0; p.artic = null; });
+  });
+  Object.assign(hive, { key: null, melody: null, chords: null, transpose: 0 });
+  hive.plan.length = 0;
+}
+// best home for a new layer when you just say "add": the free section nearest your register
+function sectionForLayer(midi) {
+  let best = 0, bd = 1e9;
+  SECTIONS.forEach((s, i) => {
+    if (hive.melody && i === hive.leader) return;
+    const d = Math.abs(s.home - midi) + (s.lines && s.lines.layered ? 12 : 0);
+    if (d < bd) { bd = d; best = i; }
+  });
+  return best;
+}
+
+function finalizePhrase() {
+  const c = capture; capture = null;
+  if (!c) return;
+  closeNote(c);
+  const s = SECTIONS[c.sec];
+  c.live.forEach((p) => { p.live = false; rest(p); p.cur = -1; });
+  s.live = false; s.capturing = false;
+  hum.sounding = false; hum.hist.length = 0;
+  refreshPicker();
+  if (c.quiet) return; // never decided it was humming
+  const raw = c.notes.filter((n) => n.dur >= 0.07).map((n) => ({ t: n.t, dur: n.dur, m: n.n ? n.sum / n.n : n.m }));
+  if (!raw.length) return;
+  const lastN = raw[raw.length - 1];
+  if (lastN.t + lastN.dur < 0.5) { flash(null, `${targetName(c.tgt)} kept the old line. Hum a little longer to teach a new one.`); return; }
+
+  const intent = hive.nextHum; hive.nextHum = null;
+  const fresh = !transport.playing || !hive.key;
+  const meter = transport.meter;
+  let bpm = transport.bpm, key = hive.key, tempoNote = "";
+  if (fresh) {
+    const est = B.estimateTempo(raw.map((n) => n.t));
+    if (!transport.playing) {
+      bpm = est && est.conf > 0.3 ? est.bpm : 96;
+      transport.bpm = transport.bpmTarget = bpm;
+      tempoNote = est && est.conf > 0.3 ? `${bpm} bpm` : `${bpm} bpm (couldn't hear a clear beat)`;
+    }
+    key = B.detectKey(raw.map((n) => ({ m: n.m, w: n.dur })), null);
+  }
+  const bps = bpm / 60;
+  let offset = 0, anchor = 0;
+  if (!fresh || transport.playing) { anchor = Math.floor(c.startBeat / meter) * meter; offset = c.startBeat - anchor; }
+  const ph = B.correctPhrase(raw, { bpm, meter, key, autocorrect: hive.autocorrect, offset, startAtZero: !transport.playing });
+  if (!ph) return;
+  const part = { notes: ph.notes, len: ph.len, anchor };
+  const bars = ph.len / meter, barTxt = bars === 1 ? "one-bar" : `${bars}-bar`;
+  const fixTxt = hive.autocorrect ? ` in ${B.keyName(key)}` : " as you hummed it";
+  let msg = "";
+
+  if (c.tgt.level === "player") {
+    const p = SECTIONS[c.sec].players[c.tgt.p];
+    p.prevPart = p.part; p.part = part; p.muted = false;
+    if (!hive.key) hive.key = key;
+    msg = `${p.name} plays your ${barTxt} line${fixTxt}. The rest of the ${s.name.toLowerCase()} keep going.`;
+  } else {
+    const layering = intent === "add" || (!fresh && !(c.tgt.level === "orchestra" || c.sec === hive.leader)) || !hive.mimic;
+    if (!layering) {
+      // the orchestra plays along: your tune on top, harmony and bass underneath
+      const leader = c.tgt.level === "orchestra" ? hive.leader : c.sec;
+      if (!fresh) key = B.detectKey(ph.notes.map((n) => ({ m: n.m, w: n.d })), hive.key);
+      arrangeAll(part, leader, key, meter);
+      SECTIONS.forEach((x) => { x.muted = false; });
+      const ch = hive.chords.map((x) => B.chordName(x, key)).join(" ");
+      msg = `${fresh ? "Got it" : "New tune"}: ${B.keyName(key)}${tempoNote ? ", " + tempoNote : ""}. ${SECTIONS[leader].name} lead, everyone plays along (${ch}).`;
+    } else {
+      let si = c.sec;
+      if (c.tgt.level === "orchestra") si = sectionForLayer(raw[0].m + hum.shift);
+      const sx = SECTIONS[si];
+      if (!hive.key) hive.key = key;
+      voiceSection(sx, part, hive.key, meter);
+      if (sx.lines) sx.lines.layered = true;
+      sx.muted = false;
+      msg = `${sx.name} add your ${barTxt} line${fixTxt}${sx.n > 1 ? ", in harmony" : ""}.`;
+    }
+  }
+  if (!transport.playing) startTransport();
+  flash(null, msg + " Say “undo” to take it back.");
+  refreshPicker(); renderReadout(true);
+}
+
+/* ------------------------------------------------------------------ */
+/* A small speech model on your device (Whisper tiny, via transformers.js) */
+/* ------------------------------------------------------------------ */
+const ASR_LIB = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.6";
+const ASR_MODEL = "Xenova/whisper-tiny.en";
+const asr = { state: "idle", pipe: null, pct: 0, queued: null, err: "" };
+let smartListen = true;
+async function loadASR() {
+  if (asr.state !== "idle") return;
+  asr.state = "loading"; renderHive();
+  try {
+    const T = await import(ASR_LIB);
+    T.env.allowLocalModels = false;
+    const seen = {};
+    asr.pipe = await T.pipeline("automatic-speech-recognition", ASR_MODEL, {
+      dtype: "q8",
+      progress_callback: (e) => {
+        if (e && e.status === "progress" && e.total) {
+          seen[e.file] = [e.loaded, e.total];
+          let a = 0, b = 0; Object.values(seen).forEach(([l, t]) => { a += l; b += t; });
+          asr.pct = Math.round((100 * a) / b); renderHive();
+        }
+      },
+    });
+    asr.state = "ready";
+    if (asr.queued) { const q1 = asr.queued; asr.queued = null; runASR(q1); }
+  } catch (e) {
+    asr.state = "failed"; asr.err = String((e && e.message) || e);
+    if (asr.queued) { asr.queued = null; flash(null, "I heard talking, but the speech model couldn't load here. Hold Talk to give a command."); }
+  }
+  renderHive();
+}
+function finishSpeech(u) {
+  if (!tapBuf) { flash(null, "I heard talking. Hold Talk to give a command."); return; }
+  const end = tapPos, start = Math.max(u.startSample, end - tapBuf.length + 1);
+  const n = end - start;
+  if (n < ctx.sampleRate * 0.3) return;
+  const pcm = new Float32Array(n);
+  for (let i = 0; i < n; i++) pcm[i] = tapBuf[(start + i) % tapBuf.length];
+  const job = { pcm, sr: ctx.sampleRate };
+  if (asr.state === "ready") runASR(job);
+  else if (asr.state === "failed") flash(null, "I heard talking, but the speech model couldn't load here. Hold Talk to give a command.");
+  else { asr.queued = job; loadASR(); showHeard("…", `Heard you talk. The speech model is loading${asr.pct ? ` (${asr.pct}%)` : ""}`); }
+}
+async function to16k(pcm, sr) {
+  if (sr === 16000) return pcm;
+  const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (OAC) {
+    const oc = new OAC(1, Math.ceil((pcm.length * 16000) / sr), 16000);
+    const buf = oc.createBuffer(1, pcm.length, sr); buf.copyToChannel ? buf.copyToChannel(pcm, 0) : buf.getChannelData(0).set(pcm);
+    const src = oc.createBufferSource(); src.buffer = buf; src.connect(oc.destination); src.start();
+    const r = await oc.startRendering();
+    return r.getChannelData(0);
+  }
+  const ratio = sr / 16000, out = new Float32Array(Math.floor(pcm.length / ratio));
+  for (let i = 0; i < out.length; i++) out[i] = pcm[Math.floor(i * ratio)];
+  return out;
+}
+async function runASR(job) {
+  showHeard("…", "Understanding");
+  try {
+    const x = await to16k(job.pcm, job.sr);
+    const out = await asr.pipe(x);
+    const text = String((out && out.text) || "").replace(/\[[^\]]*\]|\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
+    if (!text || /^(you|thank you\.?|\.)$/i.test(text)) { flash(null, "I heard talking but couldn't make out words"); return; }
+    if (clefOpen) clefAsk(text, "voice"); else handle(text, "voice");
+  } catch (e) { flash(null, "The speech model stumbled on that. Try again, or hold Talk."); }
+}
+
+
+function setStatus(msg) { $("status").textContent = msg || ""; }
+function updateButtons() {
+  const live = !!mode;
+  $("micBtn").classList.toggle("live", live);
+  $("micLabel").textContent = mode === "mic" ? "Stop listening" : mode === "file" ? "Stop" : "Listen";
+  $("fileInput").disabled = live;
+  $("fileLabel").style.opacity = live ? 0.4 : "";
+  $("playBtn").textContent = transport.playing ? "Stop orchestra" : anyLine() ? "Play orchestra" : "Play the minuet";
+  $("fixBtn").setAttribute("aria-pressed", String(hive.autocorrect));
+  $("fixBtn").textContent = hive.autocorrect ? "Auto-correct on" : "Auto-correct off";
+}
+
+function isEmbedded() { try { return window.self !== window.top; } catch (e) { return true; } }
+
+async function startMic() {
+  setStatus("");
+  try { ensureCtx(); } catch (e) { setStatus("This browser can't run Web Audio, so the orchestra can't listen here."); return; }
+  const viewerMsg = "Claude's page viewer blocks the mic, so humming needs this page on its own https address. Typed and spoken cues still work, and so does a voice memo.";
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus(isEmbedded() ? viewerMsg : "This browser has no mic access here. Try a voice memo.");
+    return;
+  }
+  $("micLabel").textContent = "Asking for the mic…";
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false } });
+  } catch (e) {
+    updateButtons();
+    const name = e && e.name;
+    if ((name === "NotAllowedError" || name === "SecurityError") && isEmbedded()) setStatus(viewerMsg);
+    else if (name === "NotAllowedError" || name === "SecurityError") setStatus("Mic access was blocked. Allow the mic for this page in your browser settings.");
+    else if (name === "NotFoundError") setStatus("No mic was found. Connect headphones with a mic.");
+    else setStatus("The mic couldn't start. Try a voice memo.");
+    return;
+  }
+  const src = ctx.createMediaStreamSource(micStream);
+  src.connect(analyser);
+  srcNodes = [src];
+  begin("mic");
+  if (smartListen) loadASR(); // start fetching the speech model while you warm up
+  try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) { wakeLock = null; }
+}
+function begin(m) {
+  mode = m; utt = null;
+  Object.assign(hum, { sounding: false, held: null, silentFrames: 99, noise: 0.004 });
+  hum.hist.length = 0;
+  updateButtons();
+}
+function stopInput() {
+  if (capture) finalizePhrase();
+  utt = null;
+  srcNodes.forEach((n) => { try { n.stop && n.stop(); } catch (e) {} try { n.disconnect(); } catch (e) {} });
+  srcNodes = [];
+  if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  mode = null;
+  updateButtons();
+}
+$("fileLabel").addEventListener("pointerdown", () => { try { ensureCtx(); } catch (e) {} });
+$("fileInput").addEventListener("change", async (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  setStatus("");
+  try { ensureCtx(); } catch (err) { setStatus("This browser can't run Web Audio, so it can't read voice memos."); return; }
+  try {
+    const data = await file.arrayBuffer();
+    const audio = await new Promise((res, rej) => { const p = ctx.decodeAudioData(data, res, rej); if (p && p.then) p.then(res, rej); });
+    if (mode) stopInput();
+    const src = ctx.createBufferSource(); src.buffer = audio;
+    src.connect(analyser);
+    src.onended = () => { if (mode === "file") setTimeout(() => { if (mode === "file") stopInput(); }, 1400); };
+    src.start();
+    srcNodes = [src];
+    begin("file");
+    flash(null, `Teaching ${targetName()} from your voice memo`);
+  } catch (err) {
+    setStatus("That file couldn't be read as audio. Try an m4a, mp3 or wav voice memo.");
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* Demo arrangement: Petzold, Minuet in G (public domain), 8 bars of 3/4 */
+/* ------------------------------------------------------------------ */
+const seq = (arr) => { let b = 0; return arr.map(([m, d]) => { const n = { b, d, m }; b += d; return n; }); };
+const DEMO_MELODY = seq([[74,1],[67,.5],[69,.5],[71,.5],[72,.5],[74,1],[67,1],[67,1],[76,1],[72,.5],[74,.5],[76,.5],[78,.5],
+  [79,1],[67,1],[67,1],[72,1],[74,.5],[72,.5],[71,.5],[69,.5],[71,1],[72,.5],[71,.5],[69,.5],[67,.5],
+  [66,1],[67,.5],[69,.5],[71,.5],[67,.5],[69,3]]);
+function loadDemo() {
+  clearAll();
+  transport.meter = 3; transport.bpm = transport.bpmTarget = 132;
+  // the minuet goes through the same brain as your humming: tune, key, chords, parts
+  const key = B.detectKey(DEMO_MELODY.map((n) => ({ m: n.m, w: n.d })));
+  arrangeAll({ notes: DEMO_MELODY.map((n) => ({ ...n })), len: 24, anchor: 0 }, 0, key, 3);
+  SECTIONS.forEach((s) => { s.dyn = s.dynNow = s.id === "violins" || s.id === "cellos" ? 3 : 2; s.muted = false; s.octave = 0; s.artic = "legato"; });
+  refreshPicker();
+}
+
+/* ------------------------------------------------------------------ */
+/* Spoken and typed cues: a conductor's vocabulary plus a tiny intent model */
+/* ------------------------------------------------------------------ */
+const SEC_WORDS = [
+  [/\b(every ?one else|every ?body else|the rest( of (you|them|the orchestra))?|(all )?the others|every other section)\b/, "REST"],
+  [/\blow strings?\b/, [3]],
+  [/\b(violins?|fiddles?|violas?)\b/, [0]],
+  [/\b(flutes?|woodwinds?|winds|piccolos?|flautists?)\b/, [1]],
+  [/\b(brass|trumpets?|horns?|trombones?|tubas?)\b/, [2]],
+  [/\b(cellos?|celli|chellos?|jello|basses|bass|cellists?)\b/, [3]],
+  [/\bstrings\b/, [0, 3]],
+  [/\b(every ?one|every ?body|all of you|tutti|(the )?(whole |full )?orchestra|you all|y ?all)\b/, ALL],
+];
+const ORD = { first: 0, "1st": 0, one: 0, "1": 0, second: 1, "2nd": 1, two: 1, "2": 1, third: 2, "3rd": 2, three: 2, "3": 2 };
+const INST = { violin: 0, fiddle: 0, trumpet: 2, horn: 2, brass: 2, cello: 3 };
+const PLAYER_RE1 = /\b(first|second|third|1st|2nd|3rd)\s+(violin|fiddle|trumpet|horn|brass|cello)s?\b/g;
+const PLAYER_RE2 = /\b(violin|fiddle|trumpet|horn|brass|cello)\s+(one|two|three|1|2|3)\b/g;
+const has = (c, re) => re.test(c);
+function curTargets() {
+  if (target.level === "orchestra") return { targets: ALL.slice(), players: null };
+  if (target.level === "player") return { targets: null, players: [[target.sec, target.p]] };
+  return { targets: [target.sec], players: null };
+}
+function parse(text) {
+  const raw = text.trim();
+  const lower = " " + raw.toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9' ]+/g, " , ") + " ";
+  // questions about making it better go to Clef, not to the players
+  if (/\b(interesting|ideas?|suggest(ions?)?|boring|inspire|spice|surprise me|stuck|what (should|could|can) (we|i) (do|try|add)|how (do|can|could|should|would) (we|i) (make|improve|spice)|make (it|this) (better|cooler|epic|more epic))\b/.test(lower)) return { raw, acts: [{ type: "ideas", targets: null, players: null }] };
+  const clauses = lower.split(/\b(?:and then|and|then|but|while|also)\b|,/);
+  let targets = null, players = null;
+  const acts = [];
+  clauses.forEach((clause) => {
+    let c = " " + clause + " ";
+    // one player: "second violin", "cello two"
+    const ps = [];
+    for (const re of [PLAYER_RE1, PLAYER_RE2]) {
+      c = c.replace(re, (m0, a, b2) => {
+        const ord = re === PLAYER_RE1 ? a : b2, inst = re === PLAYER_RE1 ? b2 : a;
+        const si = INST[inst], j = ORD[ord];
+        if (si != null && j != null && j < SECTIONS[si].n) ps.push([si, j]);
+        return " ";
+      });
+    }
+    const found = [];
+    SEC_WORDS.forEach(([re, ids]) => {
+      if (re.test(c)) {
+        if (ids === "REST") {
+          const mine = target.level === "orchestra" ? [] : [target.sec];
+          found.push(...ALL.filter((i) => !mine.includes(i)));
+        } else found.push(...ids);
+        c = c.replace(new RegExp(re.source, "g"), " ");
+      }
+    });
+    if (ps.length) { players = ps; targets = null; }
+    else if (found.length) { targets = [...new Set(found)].sort(); players = null; }
+    const T = targets ? targets.slice() : null, Pl = players ? players.slice() : null;
+    const add = (type, extra) => acts.push(Object.assign({ type, targets: T, players: Pl }, extra || {}));
+    const before = acts.length;
+    const step = has(c, /\b(much|lot|way|really|very|super|even more|a ton)\b/) ? 2 : has(c, /\b(little|bit|touch|slightly|tad|tiny)\b/) ? 0.5 : 1;
+
+    // the big moves first: new idea, add a layer, lead, follow me, auto-correct
+    if (has(c, /\b(new (idea|thing|tune|song|piece|one)|something (new|different|else)|start fresh|fresh start|scrap (that|it|this)|switch (it |things )?up|ditch (this|that|it)|clean slate)\b/)) { add("switch"); return; }
+    if (has(c, /\b(don't|do not|no|stop) (fix|correct|snap)|keep it raw|no auto ?correct|auto ?correct off|turn off (the )?auto ?correct|exactly what i hum\b/)) { add("fix", { on: false }); return; }
+    if (has(c, /\b(auto ?correct on|turn on (the )?auto ?correct|fix my (notes|timing)|snap (it )?to the key|clean (it|that) up|tidy (it|that) up)\b/)) { add("fix", { on: true }); return; }
+    if (has(c, /\b(follow me|copy me|mimic me|play along|back me up|accompany me|harmoni[sz]e( with me| this)?|what i hum)\b/)) add("follow");
+    if (has(c, /\b(take|have|get|play|carry)( over)? (the )?(melody|tune|lead|main part)\b|\b(you )?lead( this| it)?\b|\bmelody goes to\b/)) add("lead");
+    else if (has(c, /\b(you|now) (play|do|take|try) (this|that|it)\b|\bplay this\b|\bhere's your (part|line)\b/)) add("arm");
+    if (has(c, /\b(add|layer|stack)\b|\bon top\b/)) add("add");
+    if (has(c, /\b(minor|sadder|darker|moodier)\b/)) add("mode", { to: "minor" });
+    else if (has(c, /\b(major|happier|brighter|sunnier)\b/)) add("mode", { to: "major" });
+    if (has(c, /\b(key (up|higher)|modulate( up)?|up a (whole )?step|lift the key|raise the key)\b/)) add("transpose", { by: 2 });
+    else if (has(c, /\b(key (down|lower)|down a (whole )?step|lower the key)\b/)) add("transpose", { by: -2 });
+
+    // tempo (handled first so "speed up" isn't heard as "louder")
+    const num = c.match(/\b(?:tempo|bpm|metronome|speed)\D{0,8}(\d{2,3})\b/) || c.match(/\b(\d{2,3}) ?(?:bpm|beats)\b/);
+    if (num) { add("tempoSet", { bpm: +num[1] }); c = c.replace(num[0], " "); }
+    else if (has(c, /\b(faster|quicker|speed (it |things )?up|hurry|accelerando|accel|pick (it |the pace |the tempo )?up|move (it )?along|push (it )?forward|up the tempo)\b/)) {
+      add("tempo", { by: step }); c = c.replace(/\b(speed|pick|up|push)\b/g, " ");
+    } else if (has(c, /\b(slower|slow (it |things )?down|ritardando|ritard|rit|relax|take your time|hold back|broaden|easy)\b/)) {
+      add("tempo", { by: -step }); c = c.replace(/\b(slow|down|hold back)\b/g, " ");
+    }
+    // octave
+    if (has(c, /\b(lower|turn (it |them )?down|bring (it |them )?down) ?(the )?volume\b/)) { add("dyn", { by: -step }); c = c.replace(/\b(lower|down|volume)\b/g, " "); }
+    if (has(c, /\b(higher|up an octave|octave up|an octave higher|raise (it|them|the pitch))\b/)) { add("octave", { by: 1 }); c = c.replace(/\b(higher|up|octave)\b/g, " "); }
+    else if (has(c, /\b(lower|down an octave|octave down|an octave lower|deeper)\b/)) { add("octave", { by: -1 }); c = c.replace(/\b(lower|down|octave|deeper)\b/g, " "); }
+    // dynamics
+    if (has(c, /\bfortissimo\b/)) add("dynSet", { to: 5 });
+    else if (has(c, /\bpianissimo\b/)) add("dynSet", { to: 0 });
+    else if (has(c, /\bmezzo ?forte\b/)) add("dynSet", { to: 3 });
+    else if (has(c, /\bmezzo ?piano\b/)) add("dynSet", { to: 2 });
+    else if (has(c, /\bforte\b/)) add("dynSet", { to: 4 });
+    else if (has(c, /\bpiano\b/)) add("dynSet", { to: 1 });
+    else if (has(c, /\b(louder|loud|crescendo|cresc|bigger|stronger|boost|fuller|more volume|turn (it |them )?up|bring (it |them )?up|more|pump it)\b/)) add("dyn", { by: step });
+    else if (has(c, /\b(softer|soft|quieter|quiet|diminuendo|dim|gentler|gently|less|hush|turn (it |them )?down|bring (it |them )?down|calmer|back off|tone it down)\b/)) add("dyn", { by: -step });
+    // articulation
+    if (has(c, /\b(staccato|short|shorter|detached|crisp|punchy|bouncy|choppy)\b/)) add("artic", { to: "staccato" });
+    else if (has(c, /\b(legato|smooth|smoother|connected|long|longer|sustained|flowing)\b/)) add("artic", { to: "legato" });
+    // entrances and exits
+    if (has(c, /\b(from the top|da capo|from the beginning|start over|restart|again)\b/)) add("restart");
+    else if (has(c, /\b(together|everyone in|all in)\b/)) add("tutti");
+    else if (has(c, /\b(solo|alone|only|just)\b/)) add("solo");
+    else if (has(c, /\b(stop|cut( it| off)?|rest|tacet|silence|mute|hold it|shh+|enough|drop out|sit out|stop playing|be quiet)\b/)) add("stop");
+    else if (has(c, /\b(play|go|start|begin|come in|enter|resume|unmute|join( in)?|back in|keep going|continue)\b/) && !acts.some((a) => a.type === "arm" || a.type === "lead" || a.type === "follow")) add("play");
+    // lines
+    if (has(c, /\b(undo|go back|the old (one|line)|previous line|put it back)\b/)) add("undo");
+    else if (has(c, /\b(forget|clear|erase|delete|wipe)\b/)) add("forget");
+    if (acts.length === before && (found.length || ps.length)) add("select");
+  });
+  // "stop this and switch to a new thing" is one idea, not a stop
+  if (acts.some((a) => a.type === "switch")) for (let k = acts.length - 1; k >= 0; k--) if (["stop", "play", "select", "forget"].includes(acts[k].type)) acts.splice(k, 1);
+  // nothing matched a rule: let the intent model have a go at loose wording
+  if (!acts.length || acts.every((a) => a.type === "select")) {
+    const g = B.classifyIntent(raw);
+    const map = { add: "add", switch: "switch", lead: "lead", follow: "follow", rawon: "fix", rawoff: "fix", ideas: "ideas" };
+    if (g.p > 0.7 && map[g.intent]) {
+      const tgt = acts.length ? { targets: acts[0].targets, players: acts[0].players } : { targets: null, players: null };
+      acts.push(Object.assign({ type: map[g.intent], guessed: g.p }, tgt, g.intent === "rawon" ? { on: false } : g.intent === "rawoff" ? { on: true } : {}));
+    }
+  }
+  return { raw, acts };
+}
+
+const nameList = (ids) => {
+  if (ids.length === 4) return "Everyone";
+  const n = ids.map((i) => SECTIONS[i].name);
+  return n.length === 1 ? n[0] : n.slice(0, -1).join(", ") + " and " + n[n.length - 1];
+};
+const playerList = (pl) => {
+  const n = pl.map(([i, j]) => SECTIONS[i].players[j].name);
+  return n.length === 1 ? n[0] : n.slice(0, -1).join(", ") + " and " + n[n.length - 1];
+};
+function rekeyNotes(notes, from, to) {
+  const fs = B.scaleOf(from), ts = B.scaleOf(to);
+  return notes.map((n) => {
+    const pc = B.mod12(n.m), i = fs.indexOf(pc);
+    if (i < 0) return { ...n };
+    let d = B.mod12(ts[i] - pc); if (d > 6) d -= 12;
+    return { ...n, m: n.m + d };
+  });
+}
+function changeMode(to) {
+  if (!hive.key || hive.key.mode === to) return hive.key ? `Already in ${to}` : "Hum a tune first, then I can change its mood";
+  const from = hive.key, key = { tonic: from.tonic, mode: to };
+  const mel = hive.melody ? { ...hive.melody, notes: rekeyNotes(hive.melody.notes, from, key) } : null;
+  SECTIONS.forEach((s) => {
+    if (s.part) s.part = { ...s.part, notes: rekeyNotes(s.part.notes, from, key) };
+    if (s.lines && s.lines.layered) { const L = s.lines.map((l) => ({ ...l, notes: rekeyNotes(l.notes, from, key) })); L.roles = s.lines.roles; L.layered = true; s.lines = L; }
+    s.players.forEach((p) => { if (p.part) p.part = { ...p.part, notes: rekeyNotes(p.part.notes, from, key) }; });
+  });
+  if (mel) {
+    const keepLayered = SECTIONS.map((s) => (s.lines && s.lines.layered ? s.lines : null));
+    arrangeAll(mel, hive.leader, key, transport.meter);
+    SECTIONS.forEach((s, i) => { if (keepLayered[i]) s.lines = keepLayered[i]; });
+  } else hive.key = key;
+  return `Now in ${B.keyName(key)}`;
+}
+function giveMelody(sec) {
+  if (!hive.melody) return null;
+  arrangeAll(hive.melody, sec, hive.key, transport.meter);
+  return `${SECTIONS[sec].name} take the tune; everyone else rearranges around them`;
+}
+
+function apply(cmd) {
+  const out = [];
+  let focus = null;
+  cmd.acts.forEach((a) => {
+    const cur = curTargets();
+    const players = a.players || (!a.targets ? cur.players : null);
+    const ids = a.targets || cur.targets || [];
+    const list = ids.map((i) => SECTIONS[i]);
+    const pls = players ? players.map(([i, j]) => SECTIONS[i].players[j]) : null;
+    const who = pls ? playerList(players) : nameList(ids);
+    if (focus == null) {
+      if (a.players && a.players.length === 1) focus = { level: "player", sec: a.players[0][0], p: a.players[0][1] };
+      else if (a.targets && a.targets.length === 1) focus = { level: "section", sec: a.targets[0], p: null };
+      else if (a.targets && a.targets.length === 4) focus = { level: "orchestra", sec: null, p: null };
+    }
+    switch (a.type) {
+      case "dyn": case "dynSet": {
+        if (pls) {
+          const from = markOf(effDyn(pls[0]));
+          pls.forEach((p) => { p.dyn = a.type === "dyn" ? clamp(effDyn(p) + a.by, 0, 5) : a.to; });
+          out.push(`${who} ${a.type === "dynSet" ? "to" : a.by > 0 ? "up to" : "down to"} ${markOf(effDyn(pls[0]))}${from === markOf(effDyn(pls[0])) && a.type === "dyn" ? " (already there)" : ""}`);
+          break;
+        }
+        const from = markOf(list[0].dyn);
+        list.forEach((s) => {
+          const nd = a.type === "dyn" ? clamp(s.dyn + a.by, 0, 5) : a.to;
+          const delta = nd - s.dyn; s.dyn = nd;
+          s.players.forEach((p) => { if (p.dyn != null) p.dyn = clamp(p.dyn + delta, 0, 5); });
+        });
+        const to = markOf(list[0].dyn);
+        out.push(from === to && a.type === "dyn" ? `${who} already at ${to}` : a.type === "dynSet" ? `${who} to ${to}` : `${who} ${a.by > 0 ? "up" : "down"} to ${to}`);
+        break;
+      }
+      case "tempo": case "tempoSet": {
+        const from = Math.round(transport.bpmTarget);
+        transport.bpmTarget = clamp(a.type === "tempo" ? transport.bpmTarget * Math.pow(1.12, a.by) : a.bpm, 40, 220);
+        out.push(`Tempo ${from} to ${Math.round(transport.bpmTarget)}${(a.targets && a.targets.length < 4) || a.players ? " for everyone, so they stay together" : ""}`);
+        break;
+      }
+      case "octave":
+        if (pls) pls.forEach((p) => { p.octave = clamp(p.octave + a.by, -2, 2); });
+        else list.forEach((s) => { s.octave = clamp(s.octave + a.by, -2, 2); });
+        out.push(`${who} ${a.by > 0 ? "up" : "down"} an octave`);
+        break;
+      case "artic":
+        if (pls) pls.forEach((p) => { p.artic = a.to; });
+        else list.forEach((s) => { s.artic = a.to; s.players.forEach((p) => { p.artic = null; }); });
+        out.push(`${who} ${a.to === "staccato" ? "short and detached" : "smooth and connected"}`);
+        break;
+      case "solo":
+        if (pls) PLAYERS.forEach((p) => { p.muted = !pls.includes(p); });
+        else { SECTIONS.forEach((s, i) => { s.muted = !ids.includes(i); s.players.forEach((p) => { p.muted = null; }); }); }
+        if (!transport.playing && anyLine()) startTransport();
+        out.push(`${who} alone`);
+        break;
+      case "tutti":
+        SECTIONS.forEach((s) => { s.muted = false; s.players.forEach((p) => { p.muted = null; }); });
+        if (!transport.playing && anyLine()) startTransport();
+        out.push("Everyone together");
+        break;
+      case "stop":
+        if (pls) { pls.forEach((p) => { p.muted = true; }); out.push(`${who} rest${pls.length === 1 ? "s" : ""}; the rest keep going`); }
+        else if (ids.length === 4 && !a.targets && target.level === "orchestra" || ids.length === 4 && a.targets) { stopTransport(); out.push("Everyone stops"); }
+        else { list.forEach((s) => { s.muted = true; s.players.forEach((p) => { p.muted = null; }); }); out.push(`${who} rest`); }
+        break;
+      case "play": {
+        if (pls) pls.forEach((p) => { p.muted = false; });
+        else list.forEach((s) => { s.muted = false; s.players.forEach((p) => { p.muted = null; }); });
+        if (!anyLine()) { out.push("Nothing to play yet. Hum a tune or tap Play the minuet"); break; }
+        if (!transport.playing) startTransport();
+        out.push(`${who} come${pls && pls.length === 1 ? "s" : ""} in`);
+        break;
+      }
+      case "restart":
+        if (anyLine()) { SECTIONS.forEach((s) => { if (ids.includes(s.index)) s.muted = false; }); startTransport(); out.push("From the top"); } else out.push("Nothing to play yet");
+        break;
+      case "undo":
+        if (pls) pls.forEach((p) => { const x = p.part; p.part = p.prevPart; p.prevPart = x; p.cur = -1; });
+        else list.forEach((s) => {
+          const x = s.part, y = s.lines; s.part = s.prevPart; s.lines = s.prevLines || null; s.prevPart = x; s.prevLines = y;
+          s.players.forEach((p) => { p.cur = -1; });
+        });
+        out.push(`${who} back to the previous line`);
+        break;
+      case "forget":
+        if (pls) pls.forEach((p) => { p.prevPart = p.part; p.part = null; });
+        else list.forEach((s) => { s.prevPart = s.part; s.prevLines = s.lines; s.part = null; s.lines = null; restSection(s); });
+        out.push(pls ? `${who} back to the section's part` : `${who} forgot their line`);
+        break;
+      case "select":
+        out.push(`Talking to ${who}${pls || ids.length === 1 ? ". Hum to give them a line" : ""}`);
+        break;
+      case "switch":
+        clearAll(); hive.nextHum = null;
+        out.push("Clean slate. Hum the new idea and everyone will pick it up");
+        break;
+      case "add":
+        hive.nextHum = "add";
+        out.push(a.targets || a.players ? `Hum the new part for ${who}. Everything else keeps playing` : "Hum the new part. I'll give it to the section that suits it, and everything else keeps playing");
+        break;
+      case "arm":
+        hive.nextHum = "add";
+        out.push(`${who}: hum it and ${pls && pls.length === 1 ? "they'll" : "they'll"} play it. The others keep going`);
+        break;
+      case "lead": {
+        const sec = pls ? pls[0].sec.index : ids.length === 1 ? ids[0] : null;
+        if (sec == null) { out.push("Who should take the tune? Try “flute, take the melody”"); break; }
+        const r = giveMelody(sec);
+        out.push(r || `${who}: hum the tune and they'll lead`);
+        if (!r) hive.nextHum = null;
+        if (r && !transport.playing) startTransport();
+        break;
+      }
+      case "follow":
+        hive.mimic = true; hive.nextHum = null;
+        if (hive.melody) { arrangeAll(hive.melody, hive.leader, hive.key, transport.meter); SECTIONS.forEach((s) => { s.muted = false; }); if (!transport.playing) startTransport(); out.push("Everyone plays along with the tune again"); }
+        else out.push("Hum something and everyone will play along");
+        break;
+      case "fix":
+        hive.autocorrect = a.on;
+        out.push(a.on ? "Auto-correct on: I'll keep your humming in key and on the beat" : "Auto-correct off: I'll play exactly what you hum");
+        break;
+      case "mode": out.push(changeMode(a.to)); break;
+      case "transpose":
+        hive.transpose = clamp(hive.transpose + a.by, -7, 7);
+        out.push(`Key ${a.by > 0 ? "up" : "down"} a step${hive.key ? ` (now ${B.PC[B.mod12(hive.key.tonic + hive.transpose)]})` : ""}`);
+        break;
+      case "ideas": openClef(cmd.raw); out.push("Asking Clef for ideas"); break;
+    }
+  });
+  if (focus) retarget(focus);
+  refreshPicker(); updateButtons(); renderReadout(true);
+  return out.join(". ");
+}
+
+let lastHeard = "";
+function handle(text, how) {
+  if (!text || !text.trim()) return false;
+  try { ensureCtx(); } catch (e) {}
+  if (/^\s*(hey |ok |okay )?clef\b/i.test(text)) { openClef(text.replace(/^\s*(hey |ok |okay )?clef\W*/i, "")); return true; }
+  const cmd = parse(text);
+  if (!cmd.acts.length) {
+    // not a cue the orchestra knows: questions and wishes go to Clef
+    if (/\?|\b(how|what|why|could|can|should|idea|ideas|interesting|better|cooler|boring|suggest|help)\b/i.test(text)) { openClef(text); return true; }
+    flash(text, "I didn't catch a cue. Try “cellos louder”, “second violin rest” or ask Clef.");
+    return false;
+  }
+  const result = apply(cmd);
+  lastHeard = `“${cmd.raw}”: ${result}`;
+  flash(text, result);
+  return true;
+}
+
+let flashTimer = 0;
+function showHeard(said, note) {
+  const el = $("heard");
+  el.innerHTML = "";
+  if (said) { const q1 = document.createElement("span"); q1.textContent = said; el.appendChild(q1); }
+  if (note) { const sm = document.createElement("small"); sm.textContent = note; el.appendChild(sm); }
+  el.classList.add("on");
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => el.classList.remove("on"), 4200);
+}
+function flash(said, result) {
+  showHeard(said ? `“${said.trim()}”` : "", result);
+  if (result) $("line3").textContent = said ? `“${said.trim()}”: ${result}` : result;
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Hold to talk: the browser's own speech, or Claude's dictation inside  */
+/* the claude.ai viewer. Words go to the orchestra, or to Clef if open.  */
+/* ------------------------------------------------------------------ */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, talkStart = 0, handled = false, talkFor = "orchestra";
+let dict = null, dictBuf = "", dictDone = false;
+const sendWords = (t) => (talkFor === "clef" ? clefAsk(t, "voice") : handle(t, "voice"));
+const reads = (t) => talkFor === "clef" ? !!t.trim() : parse(t).acts.length > 0;
+function refreshTalkBtn() {
+  const ok = !!(SR || dict);
+  [$("talkBtn"), $("clefTalk")].forEach((b) => { b.disabled = !ok; b.title = ok ? "" : "This browser can't listen for words. Type instead."; });
+  if (!talking) $("talkLabel").textContent = ok ? "Hold to talk" : "Talk not supported";
+}
+const claudeUse = (name) => (window.claude && typeof window.claude.use === "function" ? window.claude.use(name).catch(() => null) : Promise.resolve(null));
+claudeUse("dictation").then((d) => {
+  if (!d) return;
+  dict = d;
+  d.onPartial(({ text }) => { if (text && !dictDone) { const el = $("heard"); el.textContent = `“${(dictBuf + text).trim()}…”`; el.classList.add("on"); } });
+  d.onFinal(({ text }) => {
+    if (dictDone) return;
+    dictBuf += text;
+    if (talkFor !== "clef" && parse(dictBuf).acts.length) { dictDone = true; sendWords(dictBuf); d.stop().catch(() => {}); }
+  });
+  d.onState(({ state, reason }) => {
+    if (state === "idle") {
+      if (!dictDone && dictBuf.trim()) sendWords(dictBuf);
+      dictBuf = ""; dictDone = true;
+      setTalking(false);
+      if (reason === "not_granted") setStatus("Talking is switched off for this page. Type instead.");
+      else if (reason === "unavailable") { dict = null; refreshTalkBtn(); }
+    } else setTalking(true);
+  });
+  refreshTalkBtn();
+});
+function setTalking(on) {
+  talking = on;
+  $("talkBtn").classList.toggle("on", on && talkFor === "orchestra");
+  $("clefTalk").classList.toggle("on", on && talkFor === "clef");
+  if (SR || dict) $("talkLabel").textContent = on && talkFor === "orchestra" ? "Listening…" : "Hold to talk";
+  if (!on) talkTail = performance.now() + 400;
+}
+function startTalk(forWho) {
+  talkFor = forWho || "orchestra";
+  if (dict && (isEmbedded() || !SR)) {
+    if (dict.active()) { dict.stop().catch(() => {}); return; }
+    dictBuf = ""; dictDone = false; talkStart = performance.now();
+    dict.start().catch((e) => { if (e && e.code === "not_granted") setStatus("Talking is switched off for this page. Type instead."); });
+    try { ensureCtx(); } catch (e) {}
+    if (capture) finalizePhrase();
+    return;
+  }
+  if (!SR || talking) return;
+  try { ensureCtx(); } catch (e) {}
+  if (capture) finalizePhrase();
+  handled = false;
+  try {
+    rec = new SR();
+    rec.lang = navigator.language || "en-US";
+    rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 3;
+  } catch (e) { setStatus("Speech recognition couldn't start here. Type instead."); return; }
+  rec.onresult = (e) => {
+    let interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) {
+        const alts = Array.from(r).map((x) => x.transcript);
+        const pick = alts.find(reads) || alts[0];
+        handled = true;
+        sendWords(pick);
+      } else interim += r[0].transcript;
+    }
+    if (interim && !handled) { const el = $("heard"); el.textContent = `“${interim.trim()}…”`; el.classList.add("on"); }
+  };
+  rec.onerror = (e) => {
+    const err = e && e.error;
+    if (err === "not-allowed" || err === "service-not-allowed") setStatus(isEmbedded() ? "Claude's page viewer blocks the browser's speech here. Type instead, or open the page on its own https address." : "Speech access was blocked. Allow the mic for this page, or type instead.");
+    else if (err === "no-speech") flash(null, "I didn't hear anything");
+    else if (err === "network") setStatus("Speech recognition needs a connection in this browser. Type instead.");
+  };
+  rec.onend = () => { setTalking(false); rec = null; };
+  try { rec.start(); talkStart = performance.now(); setTalking(true); setStatus(""); }
+  catch (e) { setTalking(false); }
+}
+function endTalk() {
+  if (performance.now() - talkStart <= 450) return; // a quick tap listens until you finish
+  if (rec) { try { rec.stop(); } catch (e) {} }
+  else if (dict && dict.active()) dict.stop().catch(() => {});
+}
+function holdToTalk(btn, who) {
+  btn.addEventListener("pointerdown", (e) => { e.preventDefault(); startTalk(who); });
+  btn.addEventListener("pointerup", endTalk);
+  btn.addEventListener("pointerleave", () => { if (talking) endTalk(); });
+  btn.addEventListener("contextmenu", (e) => e.preventDefault());
+}
+holdToTalk($("talkBtn"), "orchestra");
+holdToTalk($("clefTalk"), "clef");
+refreshTalkBtn();
+
+$("cmdForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const v = $("cmdInput").value;
+  if (handle(v, "typed")) $("cmdInput").value = "";
+});
+$("quick").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-cmd]");
+  if (!b) return;
+  let c = b.dataset.cmd;
+  if (c === "rest" && $("restChip").textContent === "Come in") c = "come in";
+  handle(c, "chip");
+});
+
+/* keyboard: 0 everyone, 1-4 a section, Space hold to talk, arrows for dynamics and tempo */
+document.addEventListener("keydown", (e) => {
+  if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
+  if (e.key === "Escape" && clefOpen) { closeClef(); return; }
+  if (e.key === "0") { selectAll(); return; }
+  if (e.key >= "1" && e.key <= "4") { select(+e.key - 1); return; }
+  if (e.code === "Space") { e.preventDefault(); if (!e.repeat) startTalk(clefOpen ? "clef" : "orchestra"); return; }
+  const map = { ArrowUp: "louder", ArrowDown: "softer", ArrowRight: "faster", ArrowLeft: "slower" };
+  if (map[e.key]) { e.preventDefault(); handle(map[e.key], "key"); }
+});
+document.addEventListener("keyup", (e) => {
+  if (e.code === "Space" && !(e.target && e.target.tagName === "INPUT")) endTalk();
+});
+
+$("micBtn").addEventListener("click", () => { if (mode) stopInput(); else startMic(); });
+$("playBtn").addEventListener("click", () => {
+  try { ensureCtx(); } catch (e) { setStatus("This browser can't run Web Audio."); return; }
+  if (transport.playing) { stopTransport(); return; }
+  if (!anyLine()) { loadDemo(); flash(null, "The minuet, harmonized for everyone. Tap a section, or a single player's dot, and tell it what to do."); }
+  startTransport();
+});
+$("soundBtn").addEventListener("click", () => {
+  soundOn = !soundOn;
+  $("soundBtn").setAttribute("aria-pressed", String(soundOn));
+  $("soundBtn").textContent = soundOn ? "Sound on" : "Sound off";
+  if (eng) eng.master.gain.setTargetAtTime(soundOn ? 0.8 : 0, ctx.currentTime, 0.03);
+});
+$("fixBtn").addEventListener("click", () => { handle(hive.autocorrect ? "auto correct off" : "auto correct on", "chip"); });
+document.addEventListener("visibilitychange", () => { if (document.hidden && mode === "mic") stopInput(); if (document.hidden) stopCamera(); });
+
+/* ------------------------------------------------------------------ */
+/* Readout for whoever you're talking to, and the shared brain's line    */
+/* ------------------------------------------------------------------ */
+const NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+const noteName = (m) => NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
+const ROLE_WORDS = { melody: "the tune", bass: "the bass line", pad: "held harmony", pad2: "held harmony", third: "a harmony a third below", below: "the tune an octave down", echo: "an echo of the tune", "own line": "its own line", "section line": "the section's line" };
+const barsOf = (P) => { const bars = P.len / transport.meter; return bars === 1 ? "one-bar" : `${+bars.toFixed(1)}-bar`; };
+let lastUi = 0;
+function renderReadout(force) {
+  const now = performance.now();
+  if (!force && now - lastUi < 110) return;
+  lastUi = now;
+  const lvl = target.level;
+  const s = lvl === "orchestra" ? SECTIONS[hive.leader] : SECTIONS[target.sec];
+  const p = lvl === "player" ? s.players[target.p] : s.players.find((x) => x.sounding) || s.players[0];
+  const nn = $("noteName");
+  if (p.sounding && p.held != null) { nn.textContent = noteName(p.held); nn.classList.remove("dim"); }
+  else nn.classList.add("dim");
+  let l1, l2;
+  if (lvl === "orchestra") {
+    const on = SECTIONS.filter((x) => !x.muted).length;
+    l1 = `Everyone · ${on === 4 ? "all four sections" : `${on} of 4 sections in`}`;
+    if (PLAYERS.some((x) => x.live)) l2 = `${SECTIONS[hive.leader].name} sing your tune live; everyone else listens.`;
+    else if (hive.melody) l2 = transport.playing ? `${SECTIONS[hive.leader].name} have the tune; the rest harmonize. Hum to change it.` : "Ready to play. Hum a new tune, or tap Play orchestra.";
+    else l2 = "Hum a tune and the whole orchestra plays along in harmony.";
+  } else if (lvl === "player") {
+    const bits = [p.name, effMuted(p) ? "resting" : markOf(effDyn(p))];
+    if (effArtic(p) === "staccato") bits.push("staccato");
+    const oc = s.octave + p.octave;
+    if (oc) bits.push(oc > 0 ? `${oc} octave${oc > 1 ? "s" : ""} up` : `${-oc} octave${oc < -1 ? "s" : ""} down`);
+    l1 = bits.join(" · ");
+    const role = roleOf(p), P = lineOf(p);
+    if (p.live) l2 = "Following your voice. The rest of the section keeps going.";
+    else if (effMuted(p)) l2 = "Resting while the rest of the section plays. Say “come in”.";
+    else if (P) l2 = `Plays ${ROLE_WORDS[role] || "a line"}${p.part ? ` (${barsOf(P)})` : ""}. Hum to give just this player a new line.`;
+    else l2 = "No line yet. Hum to give just this player one.";
+  } else {
+    const bits = [s.name, s.muted ? "resting" : markOf(s.dyn)];
+    if (s.artic === "staccato") bits.push("staccato");
+    if (s.octave) bits.push(s.octave > 0 ? `${s.octave} octave${s.octave > 1 ? "s" : ""} up` : `${-s.octave} octave${s.octave < -1 ? "s" : ""} down`);
+    const own = s.players.filter((x) => x.part).length;
+    if (own) bits.push(`${own} with own line`);
+    l1 = bits.join(" · ");
+    if (s.live || s.players.some((x) => x.live)) l2 = "Following your voice. Stop humming and it keeps the line.";
+    else if (s.muted) l2 = anyLine() ? "Resting. Say “come in” to bring them back." : "Resting, with no line yet.";
+    else if (s.lines && s.lines.roles) l2 = `${hive.leader === s.index && !s.lines.layered ? "Has the tune" : "Plays " + (ROLE_WORDS[s.lines.roles[0]] || "harmony")}${s.n > 1 ? `, split ${s.n} ways` : ""}.`;
+    else if (s.part) l2 = transport.playing ? (transport.beat < s.part.anchor ? "Joining at the next bar" : `Playing its ${barsOf(s.part)} line`) : `Knows a ${barsOf(s.part)} line. Tap Play orchestra.`;
+    else l2 = "No line yet. Hum to teach it one.";
+  }
+  $("line1").textContent = l1;
+  $("line2").textContent = l2;
+  $("tempoTag").textContent = `♩ = ${Math.round(transport.bpm)} · ${transport.meter}/4`;
+  renderHive();
+  if (!PLAYERS.some((x) => x.live)) refreshPicker();
+}
+function renderHive() {
+  const bits = [];
+  bits.push(hive.key ? `Key ${B.PC[B.mod12(hive.key.tonic + hive.transpose)]} ${hive.key.mode}` : "Key: from your humming");
+  bits.push(hive.melody ? `Tune: ${SECTIONS[hive.leader].name}` : "Tune: none yet");
+  bits.push(hive.autocorrect ? "Auto-correct" : "Raw");
+  const asrWord = { idle: "Speech model sleeps until you talk", loading: `Speech model loading${asr.pct ? ` ${asr.pct}%` : ""}`, ready: "Speech model ready", failed: "Speech model unavailable here" }[asr.state] || "";
+  if (smartListen && mode === "mic") bits.push(asrWord);
+  const t = bits.join(" · ");
+  const el = $("hive");
+  if (el.textContent !== t) el.textContent = t;
+}
+
+/* ------------------------------------------------------------------ */
+/* Clef: a small helper who suggests three things to try                 */
+/* ------------------------------------------------------------------ */
+let clefOpen = false, clefBusy = false, sampler = null;
+claudeUse("sample").then((s) => { sampler = s; });
+const nextBar = () => Math.ceil((transport.beat + 0.01) / transport.meter) * transport.meter;
+function plan(steps) {
+  const b0 = nextBar();
+  hive.plan.length = 0;
+  steps.forEach(([bars, run, say]) => hive.plan.push({ beat: b0 + bars * transport.meter, run, say }));
+  hive.plan.sort((a, b) => a.beat - b.beat);
+  if (!transport.playing && anyLine()) startTransport();
+}
+const leaderName = () => SECTIONS[hive.leader].name.toLowerCase();
+const IDEAS = [
+  { id: "minor", tags: "minor sad dark moody emotional drama dramatic cinematic film mood", when: () => hive.key && hive.key.mode === "major",
+    title: "Turn it minor", why: "Same tune, darker colour. It instantly sounds like a film score.", run: () => changeMode("minor") },
+  { id: "major", tags: "major happy bright cheerful uplifting light", when: () => hive.key && hive.key.mode === "minor",
+    title: "Brighten it to major", why: "Flip the mood without changing a note of rhythm.", run: () => changeMode("major") },
+  { id: "flute", tags: "flute melody tune lead different colour color fresh airy light", when: () => hive.melody && hive.leader !== 1,
+    title: "Hand the tune to the flute", why: "A new voice on top makes the same melody feel new; the violins move to harmony.", run: () => giveMelody(1) },
+  { id: "cellos", tags: "cello cellos low deep rich warm melody tune lead epic", when: () => hive.melody && hive.leader !== 3,
+    title: "Let the cellos sing the tune", why: "The melody down low sounds warm and serious.", run: () => giveMelody(3) },
+  { id: "violins", tags: "violin violins melody tune lead classic", when: () => hive.melody && hive.leader !== 0,
+    title: "Give the tune back to the violins", why: "The classic sound: strings on top, everyone else underneath.", run: () => giveMelody(0) },
+  { id: "buildup", tags: "build buildup build-up epic bigger grow intense intensity climax drama dramatic exciting energy cinematic", when: () => anyLine(),
+    title: "Build it up from nothing", why: "Start with one section, add one every two bars, end with everyone loud.", run: () => {
+      const order = [hive.leader, ...[3, 0, 1, 2].filter((i) => i !== hive.leader)];
+      SECTIONS.forEach((s, i) => { s.muted = i !== order[0]; s.dyn = 2; s.players.forEach((p) => { p.muted = null; }); });
+      plan([[2, () => { SECTIONS[order[1]].muted = false; }, `${SECTIONS[order[1]].name} come in`],
+        [4, () => { SECTIONS[order[2]].muted = false; SECTIONS.forEach((s) => { s.dyn = 3; }); }, `${SECTIONS[order[2]].name} join`],
+        [6, () => { SECTIONS[order[3]].muted = false; SECTIONS.forEach((s) => { s.dyn = 5; }); }, "Everyone, full out"]]);
+      return "Building up: one section now, then one more every two bars";
+    } },
+  { id: "keyup", tags: "key change lift higher modulate modulation exciting energy big finish climax pop", when: () => anyLine() && hive.transpose < 5,
+    title: "Key change up a step", why: "The pop-song lift: everything jumps up a step at the next bar.", run: () => {
+      plan([[0, () => { hive.transpose += 2; }, "Up a step!"]]);
+      return "Key change at the next bar";
+    } },
+  { id: "echo", tags: "echo call answer response conversation dialogue interesting texture canon round fun", when: () => hive.melody,
+    title: "Call and answer", why: "The brass echo the tune a bar later, like a conversation.", run: () => {
+      const s = SECTIONS[2];
+      s.prevPart = s.part; s.prevLines = s.lines;
+      const L = s.players.map((p, j) => ({ notes: B.lineFor("echo", hive.melody, hive.chords, hive.key, transport.meter, s.range, s.home + (j ? -5 : 7), null), len: hive.melody.len, anchor: 0 }));
+      L.roles = s.players.map(() => "echo"); L.layered = true;
+      s.lines = L; s.muted = false;
+      if (!transport.playing) startTransport();
+      return "Brass now answer the tune a bar behind";
+    } },
+  { id: "punchy", tags: "punchy rhythm rhythmic groove bouncy energy fun dance short staccato drive", when: () => anyLine(),
+    title: "Make it punchy", why: "Short, bouncy strings with the brass a notch louder.", run: () => {
+      SECTIONS[0].artic = SECTIONS[3].artic = "staccato"; SECTIONS[2].dyn = clamp(SECTIONS[2].dyn + 1, 0, 5);
+      if (!transport.playing) startTransport();
+      return "Strings short and bouncy, brass up";
+    } },
+  { id: "swell", tags: "swell dynamic dynamics emotion emotional soft quiet gentle crescendo beautiful drama", when: () => anyLine(),
+    title: "Whisper, then swell", why: "Everyone drops to a whisper and grows over four bars.", run: () => {
+      SECTIONS.forEach((s) => { s.dyn = 0; s.muted = false; });
+      plan([[1, () => SECTIONS.forEach((s) => { s.dyn = 1; })], [2, () => SECTIONS.forEach((s) => { s.dyn = 3; })], [3, () => SECTIONS.forEach((s) => { s.dyn = 4; })], [4, () => SECTIONS.forEach((s) => { s.dyn = 5; }), "Full swell"]]);
+      return "Whisper now, swelling over four bars";
+    } },
+  { id: "spotlight", tags: "solo spotlight feature break interesting contrast surprise", when: () => anyLine(),
+    title: `Spotlight solo`, why: "One player alone for two bars, then everyone crashes back in.", run: () => {
+      const p = SECTIONS[hive.leader].players[0];
+      PLAYERS.forEach((x) => { x.muted = x !== p; });
+      plan([[2, () => { PLAYERS.forEach((x) => { x.muted = null; }); SECTIONS.forEach((s) => { s.muted = false; }); }, "Everyone back in"]]);
+      return `${p.name} alone for two bars`;
+    } },
+  { id: "octave", tags: "higher brighter soar soaring sparkle shimmer lift air", when: () => anyLine() && SECTIONS[0].octave < 1,
+    title: "Send the violins up an octave", why: "The top line soars and the whole thing sounds bigger.", run: () => { SECTIONS[0].octave = 1; if (!transport.playing) startTransport(); return "Violins up an octave"; } },
+  { id: "halftime", tags: "slow slower calm chill relax halftime half time dreamy smooth ballad", when: () => anyLine(),
+    title: "Slow it right down", why: "Two thirds the tempo and smooth bows turn it into a ballad.", run: () => {
+      transport.bpmTarget = clamp(transport.bpmTarget * 0.66, 40, 220); SECTIONS.forEach((s) => { s.artic = "legato"; });
+      if (!transport.playing) startTransport();
+      return `Tempo down to ${Math.round(transport.bpmTarget)}, all smooth`;
+    } },
+  { id: "faster", tags: "faster fast energy exciting quick upbeat pace drive", when: () => anyLine(),
+    title: "Push the tempo", why: "Twenty percent quicker gives it urgency.", run: () => { transport.bpmTarget = clamp(transport.bpmTarget * 1.2, 40, 220); if (!transport.playing) startTransport(); return `Tempo up to ${Math.round(transport.bpmTarget)}`; } },
+  { id: "minuet", tags: "start begin nothing demo example", when: () => !anyLine(),
+    title: "Play the minuet", why: "Hear all four sections first, then start bossing them around.", run: () => { loadDemo(); startTransport(); return "The minuet, harmonized for everyone"; } },
+  { id: "hum", tags: "start begin hum tune write compose own", when: () => !hive.melody,
+    title: "Hum two bars to everyone", why: "Tap the empty stage, tap Listen and hum. The orchestra harmonizes it.", run: () => { selectAll(); return "Talking to everyone. Tap Listen and hum two bars"; } },
+  { id: "low", tags: "start begin low deep cello cellos bass foundation slow", when: () => !anyLine(),
+    title: "Start low with the cellos", why: "Pick the cellos, tap Listen and hum something slow and low. Build on top of it after.", run: () => { select(3); return "Talking to the cellos. Tap Listen and hum a low line"; } },
+  { id: "layer", tags: "add layer another part texture more interesting counter melody countermelody", when: () => hive.melody,
+    title: "Hum a second part on top", why: "Pick the flute, say “add this”, and hum a counter-melody. The rest keep going.", run: () => { select(1); hive.nextHum = "add"; return "Flute is listening for a new part on top"; } },
+];
+function localIdeas(q) {
+  const words = (q || "").toLowerCase().match(/[a-z]+/g) || [];
+  const scored = IDEAS.filter((i) => { try { return !!i.when(); } catch (e) { return false; } }).map((i) => {
+    let sc = Math.random() * 0.8;
+    words.forEach((w) => { if (w.length > 2 && i.tags.split(" ").includes(w)) sc += 2; });
+    return { i, sc };
+  }).sort((a, b) => b.sc - a.sc);
+  return scored.slice(0, 3).map((x) => ({ id: x.i.id, why: x.i.why }));
+}
+function stateSummary() {
+  return {
+    playing: transport.playing, tempo: Math.round(transport.bpmTarget), meter: transport.meter,
+    key: hive.key ? `${B.PC[B.mod12(hive.key.tonic + hive.transpose)]} ${hive.key.mode}` : null,
+    tuneWith: hive.melody ? SECTIONS[hive.leader].name : null,
+    sections: SECTIONS.map((s) => ({ name: s.name, resting: s.muted, loudness: markOf(s.dyn), short: s.artic === "staccato", octave: s.octave })),
+  };
+}
+async function modelIdeas(q, avail) {
+  // inside claude.ai, Claude picks and words three of the ideas this page knows how to do
+  const ask = [
+    "You help someone conduct a small browser orchestra (violins, flute, brass, cellos).",
+    `They asked: ${JSON.stringify(q || "How do we make it more interesting?")}`,
+    `Orchestra right now: ${JSON.stringify(stateSummary())}`,
+    `Ideas the page can do (id: what it does): ${avail.map((i) => `${i.id}: ${i.title}. ${i.why}`).join(" | ")}`,
+    'Pick the three that best answer them, different from each other. Reply as JSON only: {"ideas":[{"id":"...","why":"one friendly sentence, under 18 words, no dashes"}]}',
+  ].join("\n");
+  const r = await sampler.json(ask, { modelTier: "quick", cache: false });
+  const ok = (r && r.ideas || []).filter((x) => avail.some((i) => i.id === x.id)).slice(0, 3);
+  return ok.length === 3 ? ok : null;
+}
+function clefSay(text, who) {
+  const m = document.createElement("div");
+  m.className = "cmsg " + (who || "clef");
+  m.textContent = text;
+  $("clefLog").appendChild(m);
+  $("clefLog").scrollTop = $("clefLog").scrollHeight;
+  return m;
+}
+function clefCards(list) {
+  const wrap = document.createElement("div");
+  wrap.className = "ideas";
+  list.forEach((x, k) => {
+    const idea = IDEAS.find((i) => i.id === x.id);
+    if (!idea) return;
+    const c = document.createElement("div");
+    c.className = "idea";
+    const h = document.createElement("b"); h.textContent = `${k + 1}. ${idea.title}`;
+    const p = document.createElement("span"); p.textContent = x.why || idea.why;
+    const b = document.createElement("button"); b.type = "button"; b.textContent = "Try it";
+    b.addEventListener("click", () => {
+      try { ensureCtx(); } catch (e) {}
+      const res = idea.run();
+      b.textContent = "Done"; b.disabled = true;
+      flash(null, res || idea.title);
+      refreshPicker(); updateButtons(); renderReadout(true);
+    });
+    c.append(h, p, b);
+    wrap.appendChild(c);
+  });
+  $("clefLog").appendChild(wrap);
+  $("clefLog").scrollTop = $("clefLog").scrollHeight;
+}
+const CLEF_HELP = "Talk to everyone, a section or one player. Tap a section's name or a player's dot, then say things like “louder”, “rest”, “you play this”, “take the melody”, “add this”, “new idea”, “make it minor” or “key up”.";
+async function clefAsk(text, how) {
+  text = (text || "").trim();
+  if (!clefOpen) openClef();
+  if (!text) return;
+  clefSay(text, "you");
+  const low = text.toLowerCase();
+  if (/\b(what can i (say|do)|how does this work|help|commands?)\b/.test(low) && !/interesting|idea/.test(low)) { clefSay(CLEF_HELP); return; }
+  // plain orchestra cues work here too
+  const cmd = parse(text);
+  if (cmd.acts.length && !cmd.acts.some((a) => a.type === "ideas") && !cmd.acts.every((a) => a.guessed)) {
+    clefSay(apply(cmd) + ".");
+    return;
+  }
+  if (clefBusy) return;
+  clefBusy = true; $("clefBtn").classList.add("think");
+  const thinking = clefSay("Thinking…");
+  let list = null;
+  const avail = IDEAS.filter((i) => { try { return !!i.when(); } catch (e) { return false; } });
+  if (sampler) { try { list = await modelIdeas(text, avail); } catch (e) { list = null; } }
+  if (!list) list = localIdeas(text);
+  thinking.remove();
+  clefBusy = false; $("clefBtn").classList.remove("think");
+  clefSay(anyLine() ? "Here are three things to try:" : "Nothing's playing yet. Three ways to start:");
+  clefCards(list);
+}
+function openClef(q) {
+  clefOpen = true;
+  $("clefPanel").hidden = false;
+  $("clefBtn").setAttribute("aria-expanded", "true");
+  if (!$("clefLog").childElementCount) clefSay("Hi, I'm Clef. Ask me anything about the orchestra, or how to make it more interesting.");
+  if (q != null && String(q).trim()) clefAsk(q);
+  else setTimeout(() => $("clefInput").focus(), 30);
+}
+function closeClef() {
+  clefOpen = false;
+  $("clefPanel").hidden = true;
+  $("clefBtn").setAttribute("aria-expanded", "false");
+}
+$("clefBtn").addEventListener("click", () => (clefOpen ? closeClef() : openClef()));
+$("clefClose").addEventListener("click", closeClef);
+$("clefForm").addEventListener("submit", (e) => { e.preventDefault(); const v = $("clefInput").value; $("clefInput").value = ""; clefAsk(v, "typed"); });
+$("clefQuick").addEventListener("click", (e) => { const b = e.target.closest("[data-q]"); if (b) clefAsk(b.dataset.q, "chip"); });
+// googly eyes follow your pointer, and blink now and then
+const pupils = Array.from(document.querySelectorAll("#clefBtn .pupil"));
+window.addEventListener("pointermove", (e) => {
+  pupils.forEach((pu) => {
+    const r = pu.parentNode.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const a = Math.atan2(e.clientY - cy, e.clientX - cx), d = Math.min(1, Math.hypot(e.clientX - cx, e.clientY - cy) / 120);
+    pu.setAttribute("transform", `translate(${(Math.cos(a) * 3.2 * d).toFixed(2)} ${(Math.sin(a) * 3.2 * d).toFixed(2)})`);
+  });
+}, { passive: true });
+(function blink() {
+  const el = $("clefBtn");
+  el.classList.add("blink"); setTimeout(() => el.classList.remove("blink"), 140);
+  setTimeout(blink, 2600 + Math.random() * 4200);
+})();
+
+/* ------------------------------------------------------------------ */
+/* Point with your hand (optional): your camera, read on this device     */
+/* ------------------------------------------------------------------ */
+const MP_VER = "0.10.21";
+let cam = null; // { video, stream, lm, last, dwell }
+async function startCamera() {
+  if (!renderer) { setStatus("Pointing needs the 3D stage, which this browser can't show."); return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { setStatus(isEmbedded() ? "Claude's page viewer blocks the camera. Pointing works when the page is on its own https address." : "This browser has no camera access here."); return; }
+  $("pointBtn").textContent = "Starting camera…";
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: 320, height: 240 } }); }
+  catch (e) {
+    $("pointBtn").textContent = "Point";
+    setStatus(isEmbedded() ? "Claude's page viewer blocks the camera. Pointing works when the page is on its own https address." : "Camera access was blocked, so pointing is off. Tapping works the same.");
+    return;
+  }
+  try {
+    const vision = await import(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}/vision_bundle.mjs`);
+    const files = await vision.FilesetResolver.forVisionTasks(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}/wasm`);
+    const lm = await vision.HandLandmarker.createFromOptions(files, {
+      baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task" },
+      runningMode: "VIDEO", numHands: 1,
+    });
+    const video = document.createElement("video");
+    video.playsInline = true; video.muted = true; video.srcObject = stream;
+    await video.play();
+    cam = { video, stream, lm, last: 0, dwell: null, x: 0, y: 0 };
+    $("pointBtn").textContent = "Pointing on"; $("pointBtn").setAttribute("aria-pressed", "true");
+    flash(null, "Point at a section and hold still to pick it. Point at empty stage for everyone.");
+  } catch (e) {
+    stream.getTracks().forEach((t) => t.stop());
+    $("pointBtn").textContent = "Point";
+    setStatus("The hand tracker couldn't load here. Tapping works the same.");
+  }
+}
+function stopCamera() {
+  if (!cam) return;
+  cam.stream.getTracks().forEach((t) => t.stop());
+  try { cam.lm.close(); } catch (e) {}
+  cam = null;
+  $("cursor").classList.remove("on");
+  $("pointBtn").textContent = "Point"; $("pointBtn").setAttribute("aria-pressed", "false");
+}
+$("pointBtn").addEventListener("click", () => (cam ? stopCamera() : startCamera()));
+function trackHand(now) {
+  if (!cam || now - cam.last < 66 || cam.video.readyState < 2) return;
+  cam.last = now;
+  let res;
+  try { res = cam.lm.detectForVideo(cam.video, now); } catch (e) { return; }
+  const hand = res && res.landmarks && res.landmarks[0];
+  const cur = $("cursor");
+  if (!hand) { cur.classList.remove("on"); cam.dwell = null; return; }
+  // index fingertip, mirrored so it moves like a mirror
+  const tip = hand[8];
+  const nx = 1 - tip.x, ny = tip.y;
+  cam.x += (nx - cam.x) * 0.5; cam.y += (ny - cam.y) * 0.5;
+  const w = stage.clientWidth, h = stage.clientHeight;
+  cur.style.transform = `translate(${(cam.x * w).toFixed(1)}px, ${(cam.y * h).toFixed(1)}px)`;
+  cur.classList.add("on");
+  raycaster.setFromCamera(new THREE.Vector2(cam.x * 2 - 1, -(cam.y * 2 - 1)), camera);
+  const hits = raycaster.intersectObjects(hitMeshes, false);
+  const what = hits.length ? hits[0].object.userData.section : "all";
+  if (!cam.dwell || cam.dwell.what !== what) cam.dwell = { what, t: now, done: false };
+  const held = now - cam.dwell.t, need = what === "all" ? 1300 : 700;
+  cur.style.setProperty("--fill", String(Math.min(1, held / need)));
+  if (!cam.dwell.done && held > need) {
+    cam.dwell.done = true;
+    if (what === "all") { if (target.level !== "orchestra") selectAll(); }
+    else if (target.level !== "section" || target.sec !== what) select(what);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Animation                                                            */
+/* ------------------------------------------------------------------ */
+const V3 = () => (window.THREE ? new THREE.Vector3() : null);
+const tmpA = V3(), tmpB = V3(), tmpC = V3(), contact = V3(), bowX = V3(), proj = V3();
+const axisY = window.THREE ? new THREE.Vector3(0, 1, 0) : null, axisZ = window.THREE ? new THREE.Vector3(0, 0, 1) : null;
+const qY = window.THREE ? new THREE.Quaternion() : null, qZ = window.THREE ? new THREE.Quaternion() : null;
+const PARTIALS = [46, 58, 65, 70, 74, 77, 82, 86, 89];
+const COMBOS = [[], [1], [0], [0, 1], [1, 2], [0, 2], [0, 1, 2]];
+const valvesFor = (m) => { for (const p of PARTIALS) if (p >= m && p - m <= 6) return COMBOS[p - m]; return []; };
+let last = performance.now(), clock = 0;
+
+function animBowed(s, dt, busy) {
+  const I = s.inst;
+  const si = s.string;
+  const n = s.held != null ? s.midi - s.open[si] : 0;
+  stringPoint(si, stopFraction(n), tmpA);
+  I.fingerPos.lerp(tmpA, 0.3);
+  I.fingerDot.position.copy(I.fingerPos).z += 0.02;
+  I.fingerGlow.position.copy(I.fingerDot.position);
+  const showFinger = s.sounding && n > 0.5;
+  I.fingerDot.visible = showFinger;
+  I.fingerGlow.material.opacity = showFinger ? 0.55 + s.vis * 0.45 : 0;
+  I.stringMats.forEach((m, i) => { m.emissiveIntensity += ((i === si ? s.vis * 0.9 : 0) - m.emissiveIntensity) * 0.2; });
+  stringPoint(si, 1, tmpB);
+  I.ribbons.forEach((rb, k) => {
+    const N = rb.userData.N, pos = rb.geometry.attributes.position.array;
+    const amp = s.vis * 0.03, phase = Math.sin(clock * (I.isCello ? 34 : 58) + k * Math.PI);
+    for (let j = 0; j <= N; j++) {
+      const t = j / N;
+      tmpC.lerpVectors(I.fingerPos, tmpB, t);
+      const off = Math.sin(Math.PI * t) * amp * phase;
+      const w = 0.006 + s.vis * 0.006;
+      pos[j * 6] = tmpC.x + off - w; pos[j * 6 + 1] = tmpC.y; pos[j * 6 + 2] = tmpC.z + 0.004;
+      pos[j * 6 + 3] = tmpC.x + off + w; pos[j * 6 + 4] = tmpC.y; pos[j * 6 + 5] = tmpC.z + 0.004;
+    }
+    rb.geometry.attributes.position.needsUpdate = true;
+    rb.material.opacity = s.vis * (k ? 0.45 : 0.75);
+  });
+  if (s.sounding) {
+    const speed = (s.artic === "staccato" ? 0.5 : 0.22) + 0.85 * s.level;
+    s.bowP += s.bowDir * speed * dt;
+    if (s.bowP > 0.92) { s.bowP = 0.92; s.bowDir = -1; }
+    if (s.bowP < 0.08) { s.bowP = 0.08; s.bowDir = 1; }
+  } else if (!busy) s.bowP += (0.5 - s.bowP) * 0.02;
+  I.tilt += (STRINGS[si].tilt - I.tilt) * 0.18;
+  I.contactS += (si - I.contactS) * 0.18;
+  const liftTarget = s.sounding ? 0 : busy ? 0.14 : 0.02 + (reduceMotion ? 0 : Math.sin(clock * 1.2 + s.index) * 0.015);
+  I.lift += (liftTarget - I.lift) * 0.15;
+  const i0 = Math.floor(I.contactS), i1 = Math.min(3, i0 + 1), f = I.contactS - i0;
+  stringPoint(i0, BOW_S, tmpA); stringPoint(i1, BOW_S, tmpB);
+  contact.lerpVectors(tmpA, tmpB, f);
+  contact.z += 0.013 + I.lift;
+  qY.setFromAxisAngle(axisY, I.tilt);
+  qZ.setFromAxisAngle(axisZ, -0.1);
+  I.bow.quaternion.copy(qY).multiply(qZ);
+  bowX.set(1, 0, 0).applyQuaternion(I.bow.quaternion);
+  I.bow.position.copy(contact).addScaledVector(bowX, -s.bowP * BOW_LEN);
+  const sway = reduceMotion ? 0 : Math.sin(clock * 0.45 + s.index * 1.7) * 0.05;
+  if (I.isCello) I.group.rotation.set(-0.08, -0.4 + sway, 0.05);
+  else I.group.rotation.set(-0.2, -0.45 + sway, 0.1);
+}
+
+function animFlute(s) {
+  const I = s.inst;
+  const m = s.held != null ? s.held : 72;
+  const target = s.sounding ? (m < 60 ? 7 : clamp(Math.round(7 - (((m - 60) % 12) / 12) * 7), 0, 7)) : 0;
+  I.keys.forEach((k, i) => { const down = i < target ? 1 : 0; k.position.y += ((down ? 0.062 : 0.085) - k.position.y) * 0.35; });
+  I.glow.material.opacity = s.vis * 0.9;
+  I.mat.emissiveIntensity += (s.vis * 0.25 - I.mat.emissiveIntensity) * 0.2;
+  I.group.rotation.x = reduceMotion ? 0 : Math.sin(clock * 0.6 + 1) * 0.04 - s.vis * 0.05;
+}
+
+function animBrass(s) {
+  const I = s.inst;
+  const combo = s.sounding && s.held != null ? valvesFor(s.held) : [];
+  I.valves.forEach((v, i) => { const d = combo.includes(i) ? 1 : 0; v.down += (d - v.down) * 0.4; v.cap.position.y = 0.27 - v.down * 0.07; });
+  I.glow.material.opacity = s.vis * 0.85;
+  I.mat.emissiveIntensity += (s.vis * 0.35 - I.mat.emissiveIntensity) * 0.2;
+  I.bellMat.emissiveIntensity = I.mat.emissiveIntensity * 1.4;
+  I.group.rotation.x = (reduceMotion ? 0 : Math.sin(clock * 0.5 + 2) * 0.03) - 0.12 - s.vis * 0.08;
+}
+
+/* the 3D instrument shows one player per section: the one you picked, or whoever is playing */
+const lastOn = SECTIONS.map(() => -1);
+function mirror(s) {
+  const pick = target.level === "player" && target.sec === s.index ? s.players[target.p] : null;
+  const p = pick && pick.sounding ? pick : s.players.find((x) => x.live && x.sounding) || s.players.find((x) => x.sounding) || pick || s.players[0];
+  s.sounding = s.players.some((x) => x.sounding);
+  if (s.sounding) {
+    s.held = p.held; s.midi = p.midi; s.steady = p.steady;
+    s.level = Math.max(...s.players.map((x) => (x.sounding ? x.level : 0)));
+  }
+  if (p.onsets !== lastOn[s.index]) {
+    lastOn[s.index] = p.onsets;
+    s.bowDir = -s.bowDir;
+    if (s.kind === "bowed" && p.held != null) s.string = chooseString(s, p.held);
+  }
+}
+
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now; clock += dt;
+  if (mode && ctx && analyser) analyse(dt);
+  tick(dt);
+  trackHand(now);
+  const busy = transport.playing || !!mode;
+  $("dot").style.transform = `scale(${1 + (mode && hum.sounding ? hum.level * 0.9 : 0)})`;
+  const all = target.level === "orchestra";
+  SECTIONS.forEach((s, i) => {
+    mirror(s);
+    s.vis += ((s.sounding ? 0.35 + 0.65 * s.level : 0) - s.vis) * (s.sounding ? 0.25 : 0.12);
+    dotEls[i].forEach((d, j) => d.classList.toggle("on", s.players[j].sounding));
+    if (!renderer) return;
+    if (s.kind === "bowed") animBowed(s, dt, busy);
+    else if (s.kind === "flute") animFlute(s);
+    else animBrass(s);
+    const sel = !all && i === target.sec;
+    s.ring.material.opacity += ((sel ? 0.9 : all ? 0.45 : 0) - s.ring.material.opacity) * 0.2;
+    s.pool.material.opacity = (s.muted ? 0.04 : 0.12) + s.vis * 0.55 + (sel ? 0.18 : 0);
+    proj.set(0, s.top + 0.35, 0);
+    s.holder.localToWorld(proj);
+    proj.project(camera);
+    const x = (proj.x * 0.5 + 0.5) * stage.clientWidth, y = (-proj.y * 0.5 + 0.5) * stage.clientHeight;
+    labelEls[i].style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -100%)`;
+  });
+  if (PLAYERS.some((p) => p.live) && now - lastUi > 200) refreshPicker();
+  renderReadout(false);
+  if (renderer) renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+window.addEventListener("resize", resize);
+if (window.ResizeObserver) new ResizeObserver(resize).observe(stage);
+resize();
+refreshPicker();
+updateButtons();
+renderReadout(true);
+requestAnimationFrame(frame);
+
+// small hook for automated checks; does nothing on its own
+window.__conductor = { parse, handle, apply, SECTIONS, PLAYERS, transport, hive, select, selectPlayer, selectAll, loadDemo, B, IDEAS, localIdeas, clefAsk, openClef, finalizePhrase, startCapture, get target() { return target; }, get capture() { return capture; }, tick, ensureCtx };
+
+})();
+</script>
+</body>
+</html>
