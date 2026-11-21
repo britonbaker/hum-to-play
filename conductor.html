@@ -1268,13 +1268,34 @@ canvas.addEventListener("pointerup", (e) => {
 let soundOn = true;
 let ctx = null, analyser = null, timeBuf = null, eng = null;
 
+// a small concert hall: a short gap, scattered early reflections off the side walls,
+// then a dense tail that loses its highs as it dies away (air and seats soak them up)
+function hallIR(c) {
+  const sr = c.sampleRate, len = Math.floor(sr * 2.6), ir = c.createBuffer(2, len, sr), rt60 = 2.1;
+  const pre = Math.floor(sr * 0.018), k = Math.log(1000) / (rt60 * sr);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = ir.getChannelData(ch);
+    for (let r = 0; r < 14; r++) {
+      const t = pre + Math.floor(sr * (0.004 + 0.075 * Math.pow(Math.random(), 1.4)));
+      d[t] += (Math.random() < 0.5 ? -1 : 1) * 0.55 * Math.exp(-k * (t - pre) * 0.6) * (0.5 + 0.5 * Math.random());
+    }
+    let y = 0;
+    for (let i = pre; i < len; i++) {
+      const t = (i - pre) / sr;
+      const a = 0.85 * Math.exp(-t / 0.55) + 0.12;
+      y += (Math.random() * 2 - 1 - y) * a;
+      const fade = Math.min(1, t / 0.03);
+      d[i] += y * Math.exp(-k * (i - pre)) * fade * 0.5;
+    }
+  }
+  return ir;
+}
+
 function makeEngine(c) {
   const master = c.createGain(); master.gain.value = soundOn ? 0.8 : 0; master.connect(c.destination);
   const comp = c.createDynamicsCompressor(); comp.threshold.value = -16; comp.ratio.value = 3.5; comp.connect(master);
   const verb = c.createConvolver();
-  const len = Math.floor(c.sampleRate * 2.6), ir = c.createBuffer(2, len, c.sampleRate);
-  for (let ch = 0; ch < 2; ch++) { const d = ir.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
-  verb.buffer = ir;
+  verb.buffer = hallIR(c);
   const wet = c.createGain(); wet.gain.value = 0.24; verb.connect(wet); wet.connect(comp);
   const nb = c.createBuffer(1, c.sampleRate * 2, c.sampleRate);
   const nd = nb.getChannelData(0); for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
@@ -1307,9 +1328,10 @@ function bowedVoice(c, out, P) {
   const vib = c.createGain(); vib.gain.value = 0; lfo.connect(vib); vib.connect(o1.detune); vib.connect(o2.detune);
   const nbp = c.createBiquadFilter(); nbp.type = "bandpass"; nbp.frequency.value = 2500; nbp.Q.value = 0.8;
   const ng = c.createGain(); ng.gain.value = 0;
-  noiseSrc(c).connect(nbp); nbp.connect(ng); ng.connect(lp);
+  const ns = noiseSrc(c); ns.connect(nbp); nbp.connect(ng); ng.connect(lp);
   o1.start(); o2.start(); lfo.start();
   return {
+    dispose() { [o1, o2, lfo, ns].forEach((o) => { try { o.stop(); } catch (e) {} }); amp.disconnect(); },
     play(freq, level, onset, steady) {
       const t = c.currentTime;
       o1.frequency.setTargetAtTime(freq, t, onset ? 0.01 : 0.03);
@@ -1343,6 +1365,7 @@ function brassVoice(c, out) {
   const vib = c.createGain(); vib.gain.value = 0; lfo.connect(vib); vib.connect(o1.detune); vib.connect(o2.detune);
   o1.start(); o2.start(); lfo.start();
   return {
+    dispose() { [o1, o2, lfo].forEach((o) => { try { o.stop(); } catch (e) {} }); amp.disconnect(); },
     play(freq, level, onset, steady) {
       const t = c.currentTime;
       const cut = clamp(freq * (1.6 + 7 * level), 300, 9000);
@@ -1375,9 +1398,10 @@ function fluteVoice(c, out) {
   const vib = c.createGain(); vib.gain.value = 0; lfo.connect(vib); vib.connect(o1.detune); vib.connect(o2.detune); vib.connect(o3.detune);
   const nbp = c.createBiquadFilter(); nbp.type = "bandpass"; nbp.Q.value = 1.2; nbp.frequency.value = 2000;
   const ng = c.createGain(); ng.gain.value = 0;
-  noiseSrc(c).connect(nbp); nbp.connect(ng); ng.connect(lp);
+  const ns = noiseSrc(c); ns.connect(nbp); nbp.connect(ng); ng.connect(lp);
   o1.start(); o2.start(); o3.start(); lfo.start();
   return {
+    dispose() { [o1, o2, o3, lfo, ns].forEach((o) => { try { o.stop(); } catch (e) {} }); amp.disconnect(); },
     play(freq, level, onset, steady) {
       const t = c.currentTime;
       [o1, o2].forEach((o) => o.frequency.setTargetAtTime(freq, t, onset ? 0.01 : 0.03));
@@ -1392,6 +1416,298 @@ function fluteVoice(c, out) {
     silence() { const t = c.currentTime; amp.gain.setTargetAtTime(0, t, 0.05); ng.gain.setTargetAtTime(0, t, 0.03); vib.gain.setTargetAtTime(0, t, 0.05); },
   };
 }
+/* ------------------------------------------------------------------ */
+/* Realistic voices: physical models running in an AudioWorklet        */
+/* Strings and flute are digital waveguides after the Synthesis        */
+/* ToolKit; brass is additive, after Risset's trumpet studies.         */
+/* Add ?sound=classic to the address to hear the old synth voices.     */
+/* ------------------------------------------------------------------ */
+const PHYS_SRC = String.raw`/* Physical-model voices for Conductor Mode, after the Synthesis ToolKit (STK) models:
+   bowed string (McIntyre/Schumacher/Woodhouse with a bow friction table),
+   flute (jet + bore waveguide) and brass (lip-reed + bore waveguide). */
+const TAU = Math.PI * 2;
+const SIN = new Float32Array(4097); for (let i = 0; i <= 4096; i++) SIN[i] = Math.sin((TAU * i) / 4096);
+class Delay {
+  constructor(n) { this.b = new Float32Array(n); this.n = n; this.w = 0; this.d = 10; this.out = 0; }
+  tick(x) {
+    this.b[this.w] = x;
+    let r = this.w - this.d; while (r < 0) r += this.n;
+    const i = Math.floor(r), f = r - i, j = i + 1 >= this.n ? 0 : i + 1;
+    this.out = this.b[i] * (1 - f) + this.b[j] * f;
+    if (++this.w >= this.n) this.w = 0;
+    return this.out;
+  }
+  clear() { this.b.fill(0); this.out = 0; }
+}
+// phase delay (in samples) of y = b*x + a*y[-1] at angular freq w
+const onePoleDelay = (a, w) => Math.atan2(a * Math.sin(w), 1 - a * Math.cos(w)) / w;
+
+class PhysVoice extends AudioWorkletProcessor {
+  static get parameterDescriptors() {
+    return [
+      { name: "freq", defaultValue: 440, minValue: 20, maxValue: 5000, automationRate: "k-rate" },
+      { name: "drive", defaultValue: 0, minValue: 0, maxValue: 1.5, automationRate: "k-rate" },
+      { name: "vib", defaultValue: 0, minValue: 0, maxValue: 60, automationRate: "k-rate" },
+      { name: "vibHz", defaultValue: 5.5, minValue: 0.1, maxValue: 12, automationRate: "k-rate" },
+    ];
+  }
+  constructor(o) {
+    super();
+    const po = (o && o.processorOptions) || {};
+    this.model = po.model || "bowed";
+    this.sr = sampleRate;
+    this.beta = po.bowPos || 0.127;
+    this.seed = (po.seed || 1) * 9301 + 49297;
+    this.f = 0; this.drv = 0; this.ph = Math.random(); this.vph = Math.random();
+    this.drift = 0; this.driftT = 0; this.rateJit = 0; this.noiseLp = 0;
+    this.idle = 0; this.energy = 0;
+    const N = 8192;
+    if (this.model === "bowed") {
+      this.neck = new Delay(N); this.bridge = new Delay(N);
+      this.sp = 0.75 - (0.2 * 22050) / this.sr; this.sg = 0.95; this.sy = 0;
+    } else if (this.model === "flute") {
+      this.bore = new Delay(N); this.jet = new Delay(N);
+      this.fp = 0.7 - (0.1 * 22050) / this.sr; this.fy = 0; this.dx = 0; this.dy = 0;
+    } else {
+      // brass is additive: Risset's trumpet rule, where louder playing lets more harmonics in, and they arrive later
+      this.H = 40; this.env = new Float32Array(this.H); this.bph = 0; this.fmt = new Float32Array(this.H); this.fmtF = 0;
+    }
+    this.tuneCents = po.detune || 0; this.driftAmt = po.drift == null ? 2.2 : po.drift;
+    this.velA = po.velA || 0.2; this.prA = po.prA == null ? 0.45 : po.prA; this.prMax = po.prMax || 0.85; this.loopOff = po.loopOff == null ? 1.5 : po.loopOff; this.velRef = po.velRef || 350; this.velExp = po.velExp == null ? 1 : po.velExp; this.velScale = 1; this.fOff = po.fOff == null ? 2 : po.fOff; this.bA = po.bA || 0.9; this.bB = po.bB == null ? 0.3 : po.bB;
+  }
+  rnd() { this.seed = (this.seed * 16807) % 2147483647; return (this.seed / 2147483647) * 2 - 1; }
+  setLen(f) {
+    const sr = this.sr, w = (TAU * f) / sr;
+    if (this.model === "bowed") {
+      const total = sr / f - this.loopOff - onePoleDelay(this.sp, w) - (0.1 + 0.5 * Math.pow(f / 2637, 3));
+      this.velScale = Math.min(1, Math.pow(this.velRef / f, this.velExp));
+      this.bridge.d = Math.max(1, total * this.beta);
+      this.neck.d = Math.max(1, total * (1 - this.beta));
+    } else if (this.model === "flute") {
+      // bore tuned for the fundamental; the loop also holds the filter, the dc blocker and one sample of feedback
+      const total = Math.max(4, (sr / (f * 0.66666)) * Math.pow(2, (17.5 - 0.23 * (12 * Math.log2(f / 261.63))) / 1200) - this.fOff - this.fluteCorr(f));
+      this.bore.d = total; this.jet.d = Math.max(1, total * 0.32);
+    } else {
+      this.bf = f;
+      if (Math.abs(f - this.fmtF) > f * 0.01) {
+        this.fmtF = f;
+        // the bell's formant near 1.2 kHz and a soft roll-off near the top
+        for (let k = 0; k < this.H; k++) {
+          const hf = (k + 1) * f, x = Math.log2(hf / 1250);
+          this.fmt[k] = hf > sr * 0.45 ? 0 : (1 + 1.4 * Math.exp(-(x * x) / 0.6)) * (hf > 6000 ? Math.pow(6000 / hf, 2) : 1);
+        }
+      }
+    }
+  }
+  fluteCorr() { return 0; }
+  process(inputs, outputs, P) {
+    const out = outputs[0][0]; if (!out) return true;
+    const n = out.length;
+    const target = P.freq[0] * Math.pow(2, this.tuneCents / 1200), drvT = P.drive[0];
+    const vib = P.vib[0], vibHz = P.vibHz[0];
+    if (drvT < 1e-4 && this.drv < 1e-4 && this.energy < 1e-7) {
+      out.fill(0); for (let c = 1; c < outputs[0].length; c++) outputs[0][c].fill(0);
+      this.f = 0; return true;
+    }
+    if (this.f === 0) this.f = target;
+    // slow human pitch drift and vibrato-rate wobble, updated per block
+    this.driftT += n / this.sr;
+    if (this.driftT > 0.09) { this.driftT = 0; this.drift += (this.rnd() * this.driftAmt - this.drift) * 0.25; this.rateJit += (this.rnd() * 0.12 - this.rateJit) * 0.3; }
+    let e = 0;
+    const kf = 1 - Math.exp(-1 / (0.004 * this.sr)), kd = 1 - Math.exp(-1 / (0.012 * this.sr));
+    for (let i = 0; i < n; i++) {
+      this.f += (target - this.f) * kf;
+      this.drv += (drvT - this.drv) * kd;
+      if ((i & 15) === 0) {
+        this.vph += (16 * vibHz * (1 + this.rateJit)) / this.sr; if (this.vph > 1) this.vph -= 1;
+        const cents = vib * Math.sin(TAU * this.vph) + this.drift;
+        this.setLen(this.f * Math.pow(2, cents / 1200));
+      }
+      const nz = this.rnd();
+      let y;
+      if (this.model === "bowed") y = this.bowed(nz);
+      else if (this.model === "flute") y = this.flute(nz);
+      else y = this.brass(nz);
+      if (!(y === y) || Math.abs(y) > 50) { this.reset(); y = 0; }
+      out[i] = y; e += y * y;
+    }
+    this.energy = e / n;
+    for (let c = 1; c < outputs[0].length; c++) outputs[0][c].set(out);
+    return true;
+  }
+  reset() {
+    if (this.neck) { this.neck.clear(); this.bridge.clear(); this.sy = 0; }
+    if (this.bore) { this.bore.clear(); }
+    if (this.env) this.env.fill(0);
+    if (this.jet) this.jet.clear();
+    this.fy = 0; this.dx = 0; this.dy = 0; this.lx1 = this.lx2 = this.ly1 = this.ly2 = 0;
+  }
+  bowed(nz) {
+    const d = this.drv;
+    // bow speed and pressure both rise with loudness; a little rosin noise on the hair
+    this.noiseLp += (nz - this.noiseLp) * 0.15;
+    const vel = (0.03 + this.velA * d * this.velScale) * (1 + 0.06 * this.noiseLp) * (d > 0.002 ? 1 : 0);
+    const slope = 5 - 4 * Math.min(this.prMax, 0.3 + this.prA * d);
+    this.sy = this.sg * (1 - this.sp) * this.bridge.out + this.sp * this.sy;
+    const bridgeRef = -this.sy, nutRef = -this.neck.out;
+    const strV = bridgeRef + nutRef, dv = vel - strV;
+    let fr = Math.pow(Math.abs(dv * slope) + 0.75, -4); if (fr > 1) fr = 1;
+    const nv = vel > 0 ? dv * fr : 0;
+    this.neck.tick(bridgeRef + nv);
+    this.bridge.tick(nutRef + nv);
+    return this.bridge.out * 0.9;
+  }
+  flute(nz) {
+    const d = this.drv;
+    let breath = Math.min(1, d * 10) * (this.bA + this.bB * Math.min(d, 1));
+    breath += breath * 0.12 * nz;
+    const bore = this.bore.out;
+    this.fy = -(1 - this.fp) * bore + this.fp * this.fy;
+    let t = this.fy;
+    const dc = t - this.dx + 0.995 * this.dy; this.dx = t; this.dy = dc; t = dc;
+    let pd = breath - 0.5 * t;
+    pd = this.jet.tick(pd);
+    let jt = pd * (pd * pd - 1); if (jt > 1) jt = 1; else if (jt < -1) jt = -1;
+    pd = jt + 0.5 * t;
+    this.bore.tick(pd);
+    return this.bore.out * 0.3;
+  }
+  brass(nz) {
+    const d = this.drv, sr = this.sr;
+    this.bph += this.bf / sr; if (this.bph >= 1) this.bph -= 1;
+    let y = 0;
+    for (let k = 0; k < this.H; k++) {
+      const g = this.fmt[k]; if (g === 0) break;
+      // upper harmonics follow the breath more slowly, so each note blooms from dark to bright
+      const tau = 0.006 + 0.0035 * k;
+      this.env[k] += (d - this.env[k]) * (1 - Math.exp(-1 / (tau * sr)));
+      const e = this.env[k] < 0 ? 0 : this.env[k];
+      const bright = 0.28 + 0.6 * Math.min(1, e);
+      const a = e * Math.pow(bright, k) * g;
+      if (a < 1e-5) continue;
+      let p = this.bph * (k + 1); p -= Math.floor(p);
+      y += a * SIN[(p * 4096) | 0];
+    }
+    this.noiseLp += (nz - this.noiseLp) * 0.3;
+    return y * 0.32 * (1 + 0.04 * this.noiseLp);
+  }
+}
+registerProcessor("phys-voice", PhysVoice);
+`;
+const wantClassic = /[?&]sound=classic/.test(typeof location !== "undefined" ? location.search : "");
+let soundEngine = "classic";
+
+function loadPhys(c) {
+  if (wantClassic || !c.audioWorklet || typeof AudioWorkletNode === "undefined") return Promise.resolve(false);
+  try {
+    const url = URL.createObjectURL(new Blob([PHYS_SRC], { type: "application/javascript" }));
+    return c.audioWorklet.addModule(url).then(() => true, () => false);
+  } catch (e) { return Promise.resolve(false); }
+}
+
+// a body's resonances as a short impulse response: a few strong low modes,
+// a dense cloud above them and the "bridge hill" that gives strings their bite
+function bodyIR(c, kind) {
+  const cello = kind === "cello", sr = c.sampleRate;
+  const len = Math.floor(sr * (cello ? 0.2 : 0.13)), buf = c.createBuffer(1, len, sr), h = buf.getChannelData(0);
+  const main = cello ? [[100, 12, 1], [178, 18, 0.8], [205, 18, 0.9], [330, 24, 0.5], [450, 26, 0.4]]
+                     : [[275, 15, 0.9], [405, 20, 0.5], [460, 22, 0.8], [540, 22, 1], [700, 26, 0.5]];
+  const hill = cello ? 1200 : 2600, lo = cello ? 250 : 650;
+  let seed = cello ? 7 : 3; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const modes = main.slice();
+  for (let k = 0; k < 70; k++) {
+    const f = lo * Math.pow(7000 / lo, rnd()), x = Math.log2(f / hill);
+    const g = (0.25 + 0.75 * Math.exp(-(x * x) / 0.9)) * (f > 4500 ? Math.pow(4500 / f, 1.5) : 1) * (0.4 + 0.6 * rnd());
+    modes.push([f, 22 + 30 * rnd(), g * 0.55]);
+  }
+  for (const [f, q, g] of modes) {
+    const w = (2 * Math.PI * f) / sr, dec = Math.exp((-Math.PI * f) / (q * sr)), ph = rnd() * 6.283;
+    let a = g; for (let i = 0; i < len; i++) { h[i] += a * Math.sin(w * i + ph); a *= dec; if (a < 1e-5) break; }
+  }
+  h[0] += 0.6;
+  let e = 0; for (let i = 0; i < len; i++) e += h[i] * h[i];
+  const s = 1 / Math.sqrt(e); for (let i = 0; i < len; i++) h[i] *= s;
+  return buf;
+}
+
+let physSeed = 1;
+function physVoice(c, out, model, o) {
+  const node = new AudioWorkletNode(c, "phys-voice", {
+    numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1],
+    processorOptions: { model, seed: physSeed++, bowPos: o.bowPos, detune: o.detune || 0 },
+  });
+  const amp = c.createGain(); amp.gain.value = 0; node.connect(amp); amp.connect(out);
+  const F = node.parameters.get("freq"), D = node.parameters.get("drive"), V = node.parameters.get("vib"), VH = node.parameters.get("vibHz");
+  VH.value = o.vibHz;
+  let on = false;
+  return {
+    play(freq, level, onset, steady) {
+      const t = c.currentTime, lv = clamp(level, 0, 1);
+      const drv = 0.15 + 0.85 * lv;
+      if (onset || !on) {
+        F.cancelScheduledValues(t); D.cancelScheduledValues(t);
+        if (model === "brass") {
+          // a lip slur up into the note, then the tongue releases the air
+          F.setValueAtTime(freq * 0.985, t); F.setTargetAtTime(freq, t, 0.025);
+          D.setValueAtTime(on ? drv * 0.2 : 0, t); D.setTargetAtTime(drv, t + 0.004, 0.012);
+        } else if (model === "flute") {
+          // the chiff: a puff of extra air that settles
+          F.setValueAtTime(freq, t);
+          D.setValueAtTime(Math.min(1.4, drv * 1.3), t); D.setTargetAtTime(drv, t + 0.03, 0.05);
+        } else {
+          // a bow change: the bow eases off and grips again
+          F.setValueAtTime(freq, t);
+          D.setValueAtTime(on ? drv * 0.25 : drv * 0.6, t); D.setTargetAtTime(drv, t + 0.008, 0.02);
+        }
+      } else {
+        F.setTargetAtTime(freq, t, 0.02);
+        D.setTargetAtTime(drv, t, 0.05);
+      }
+      on = true;
+      V.setTargetAtTime(steady > o.vibAfter ? o.vib : 0, t, 0.25);
+      const g = o.gain * (model === "bowed" ? (0.5 + 0.5 * lv) * Math.pow(Math.max(1, freq / 350), 0.8) : model === "flute" ? 0.35 + 0.65 * lv : 1);
+      amp.gain.setTargetAtTime(g, t, onset ? 0.005 : 0.04);
+    },
+    silence() {
+      const t = c.currentTime; on = false;
+      D.cancelScheduledValues(t); D.setTargetAtTime(0, t, model === "brass" ? 0.03 : 0.05);
+      V.setTargetAtTime(0, t, 0.05);
+      amp.gain.setTargetAtTime(0, t + 0.05, 0.12);
+    },
+    dispose() { try { node.disconnect(); amp.disconnect(); } catch (e) {} },
+  };
+}
+
+function upgradeVoices(c) {
+  loadPhys(c).then((ok) => {
+    if (!ok || c !== ctx) return;
+    try {
+      SECTIONS.forEach((s) => {
+        let dest = s.out;
+        if (s.kind === "bowed") {
+          const conv = c.createConvolver(); conv.normalize = false;
+          conv.buffer = bodyIR(c, s.open[0] < 50 ? "cello" : "violin");
+          conv.connect(s.out); dest = conv;
+        } else if (s.kind === "brass") {
+          const hp = c.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 110; hp.Q.value = 0.6;
+          hp.connect(s.out); dest = hp;
+        }
+        s.players.forEach((p) => {
+          const o = s.kind === "brass" ? { gain: 0.26, vib: 6, vibHz: 5.2 + p.j * 0.3, vibAfter: 0.5, detune: (p.j - 0.5) * 4 }
+            : s.kind === "flute" ? { gain: 0.45, vib: 10, vibHz: 5.1, vibAfter: 0.35 }
+            : s.open[0] < 50 ? { gain: 0.2, vib: 13 + p.j * 2, vibHz: 5.0 + p.j * 0.31, vibAfter: 0.28, bowPos: 0.12 + p.j * 0.012, detune: (p.j - 0.5) * 5 }
+            : { gain: 0.32, vib: 15 + p.j * 2, vibHz: 5.6 + p.j * 0.27, vibAfter: 0.28, bowPos: 0.12 + p.j * 0.01, detune: (p.j - 1) * 4 };
+          const v = physVoice(c, p.gain, s.kind === "bowed" ? "bowed" : s.kind, o);
+          p.tail.disconnect(); p.tail.connect(dest);
+          if (p.voice && p.voice.dispose) p.voice.dispose();
+          p.voice = v;
+        });
+      });
+      soundEngine = "real";
+    } catch (e) { soundEngine = "classic"; }
+  });
+}
+
 function ensureCtx() {
   if (!ctx) {
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -1418,7 +1734,7 @@ function ensureCtx() {
         let node = p.gain;
         // players in a section sit slightly apart in the stereo field
         if (s.n > 1 && ctx.createStereoPanner) { const pn = ctx.createStereoPanner(); pn.pan.value = (p.j - (s.n - 1) / 2) * 0.22; p.gain.connect(pn); node = pn; }
-        node.connect(s.out);
+        node.connect(s.out); p.tail = node;
         const out = p.gain;
         if (s.kind === "brass") p.voice = brassVoice(ctx, out);
         else if (s.kind === "flute") p.voice = fluteVoice(ctx, out);
@@ -1427,6 +1743,7 @@ function ensureCtx() {
       });
       s.out.gain.value = 1;
     });
+    upgradeVoices(ctx);
     transport.lastT = ctx.currentTime;
   }
   if (ctx.state === "suspended") ctx.resume();
@@ -2989,7 +3306,7 @@ renderReadout(true);
 requestAnimationFrame(frame);
 
 // small hook for automated checks; does nothing on its own
-window.__conductor = { parse, handle, apply, SECTIONS, PLAYERS, transport, hive, select, selectPlayer, selectAll, loadDemo, B, IDEAS, localIdeas, clefAsk, openClef, finalizePhrase, startCapture, get target() { return target; }, get capture() { return capture; }, tick, ensureCtx };
+window.__conductor = { get soundEngine() { return soundEngine; }, parse, handle, apply, SECTIONS, PLAYERS, transport, hive, select, selectPlayer, selectAll, loadDemo, B, IDEAS, localIdeas, clefAsk, openClef, finalizePhrase, startCapture, get target() { return target; }, get capture() { return capture; }, tick, ensureCtx };
 
 })();
 </script>
