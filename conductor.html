@@ -2400,20 +2400,45 @@ $("ideaBtn").addEventListener("click", async () => {
   }
 });
 
+// The tiny speech model can loop on one word when asked for word timings.
+// Trust its timings only when they look like real speech; otherwise decode
+// again without timings and spread the words over the phrase instead.
+function normWord(w) { return String(w || "").toLowerCase().replace(/[^a-z0-9']/g, ""); }
+function wordChunksOk(chunks, dur) {
+  const ws = chunks.filter((c) => !/^\s*[\[(]/.test(c.text || ""));
+  if (!ws.length || ws.length > dur * 5 + 4) return false;
+  let run = 1;
+  for (let i = 0; i < ws.length; i++) {
+    const t = ws[i].timestamp || [];
+    if (!(t[0] >= 0) || t[0] > dur + 0.5 || (t[1] != null && t[1] > dur + 0.5)) return false;
+    if (i && normWord(ws[i].text) && normWord(ws[i].text) === normWord(ws[i - 1].text)) { if (++run > 3) return false; } else run = 1;
+  }
+  return true;
+}
+function collapseRuns(text) {
+  const out = []; let run = 0;
+  for (const w of text.split(" ")) {
+    if (out.length && normWord(w) && normWord(w) === normWord(out[out.length - 1])) { if (++run >= 3) continue; } else run = 0;
+    out.push(w);
+  }
+  return out.join(" ");
+}
+
 async function runASR(job) {
   showHeard("…", "Understanding");
   try {
     const x = await to16k(job.pcm, job.sr);
     let out = null, timing = "estimated";
-    try { out = await asr.pipe(x, { return_timestamps: "word" }); if (out && out.chunks && out.chunks.length) timing = "word"; }
-    catch (e) { out = await asr.pipe(x); }
-    const text = String((out && out.text) || "").replace(/\[[^\]]*\]|\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
+    try { out = await asr.pipe(x, { return_timestamps: "word" }); if (out && out.chunks && wordChunksOk(out.chunks, x.length / 16000)) timing = "word"; else out = null; }
+    catch (e) { out = null; }
+    if (!out) out = await asr.pipe(x);
+    const text = collapseRuns(String((out && out.text) || "").replace(/\[[^\]]*\]|\([^)]*\)/g, " ").replace(/\s+/g, " ").trim());
     if (!text || /^(you|thank you\.?|\.)$/i.test(text)) { flash(null, "I heard talking but couldn't make out words"); return; }
     const chunks = timing === "word" ? out.chunks.filter((c) => !/^\s*[\[(]/.test(c.text || "")) : null;
     const idea = job.frames ? buildIdea(text, chunks, job.frames, job.offset, timing) : null;
     if (idea) publishIdea(idea);
     if (clefOpen) clefAsk(text, "voice");
-    else if (idea && idea.melody.length && idea.melody.reduce((a, n) => a + n.dur, 0) >= 0.3) playSungIdea(idea);
+    else if (idea && idea.melody.length && idea.melody.reduce((a, n) => a + n.dur, 0) >= 0.6) playSungIdea(idea);
     else handle(text, "voice");
   } catch (e) { flash(null, "The speech model stumbled on that. Try again, or hold Talk."); }
 }
