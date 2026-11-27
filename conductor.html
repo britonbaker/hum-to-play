@@ -2340,7 +2340,8 @@ function tagWord(w, FR, peak) {
   const pk = fs.reduce((a, f) => Math.max(a, f.rms), 0);
   const dur = w.end - w.start;
   // sung: mostly pitched, and it holds a note or stretches out longer than speech does
-  const sung = vt / at > 0.55 && vt >= 0.18 && (longest >= 0.22 || dur >= 0.5);
+  // (a stressed spoken vowel can hold steady for about a quarter second, so ask for more)
+  const sung = vt / at > 0.55 && vt >= 0.18 && (longest >= 0.3 || dur >= 0.5);
   return {
     text: w.text, start: r2(w.start), end: r2(w.end), dur: r2(dur), sung,
     pitch: med == null ? null : { note: asciiNote(med), midi: r2(med), hz: Math.round(440 * Math.pow(2, (med - 69) / 12)) },
@@ -2445,7 +2446,9 @@ function playSungIdea(idea, opts) {
   const lastN = c.notes[c.notes.length - 1];
   if (lastN.t + lastN.dur < 0.55) lastN.dur = 0.55 - lastN.t;
   finalizePhrase();
-  const sungTxt = idea.words.filter((w) => w.sung).map((w) => `“${w.text}”`).join(", ");
+  const sw = idea.words.filter((w) => w.sung && w.text !== "(sung)").map((w) => `“${w.text}”`);
+  const tuneOnly = idea.words.some((w) => w.text === "(sung)");
+  const sungTxt = sw.length ? sw.join(", ") + (tuneOnly ? " and the tune after" : "") : "the tune after your words";
   const notesTxt = mel.slice(0, 6).map((n) => noteName(Math.round(n.midi))).join(" ") + (mel.length > 6 ? " …" : "");
   flash(useWords ? idea.text : null, `${useWords ? "You sang" : `Gave ${targetName()}`} ${notesTxt}${useWords ? ` on ${sungTxt}` : ""}. ${$("line3").textContent}`);
   showIdeaCard(idea, captureSection(target));
