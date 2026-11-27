@@ -172,6 +172,27 @@ button:focus-visible, label.ghost:focus-within, .chip:focus-visible, .label:focu
 .file-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .status { margin: 0; min-height: 1.4em; font-size: 13.5px; color: var(--warn); text-align: center; text-wrap: balance; }
 .foot { margin: 0; font-size: 12.5px; color: var(--faint); text-align: center; text-wrap: balance; }
+.idea { border: 1px solid var(--line); border-radius: 18px; padding: 12px 14px; display: grid; gap: 10px; background: rgba(224, 139, 62, 0.05); }
+.idea-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 13px; color: var(--muted); }
+.idea-t { font-weight: 600; color: var(--fg); }
+.idea-words { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: flex-end; font-size: 15px; line-height: 1.2; color: var(--muted); }
+.idea-words .w { display: inline-grid; justify-items: center; gap: 2px; }
+.idea-words .w.sung { color: var(--amber-hi); font-weight: 600; }
+.idea-words .w small { font-family: var(--mono); font-size: 10.5px; color: var(--amber); font-weight: 400; }
+.idea-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.idea-lbl { font-size: 12.5px; color: var(--faint); margin-left: 4px; }
+.idea-secs { display: contents; }
+.ghost.sm { padding: 7px 11px; font-size: 13px; }
+@media (max-width: 600px) {
+  .stage { height: clamp(220px, 38vh, 360px); }
+  .controls { padding-bottom: 8px; }
+  .primary {
+    position: fixed; z-index: 20; left: 50%; transform: translateX(-50%);
+    bottom: max(16px, calc(env(safe-area-inset-bottom, 0px) + 10px));
+    box-shadow: 0 10px 30px -8px rgba(0, 0, 0, 0.7), 0 10px 30px -12px rgba(224, 139, 62, 0.6);
+  }
+  .primary:active { transform: translateX(-50%) scale(0.98); }
+}
 @media (max-width: 420px) { .talk .tl { display: none; } .talk { padding: 0 14px; } }
 @media (prefers-reduced-motion: reduce) { .primary, .dot, .note, .heard, .label { transition: none; } }
 .sec.everyone span:first-child { font-family: var(--display); font-style: italic; font-size: 16px; }
@@ -274,6 +295,15 @@ button:focus-visible, label.ghost:focus-within, .chip:focus-visible, .label:focu
       <div class="l1" id="line1">Violins · mf</div>
       <div class="l2" id="line2">No line yet. Hum to teach it one.</div>
       <div class="l3" id="line3">Tap Play the minuet, or tap Listen and hum.</div>
+    </div>
+  </div>
+  <div class="idea" id="ideaCard" hidden aria-live="polite">
+    <div class="idea-head"><span class="idea-t">Your sung idea</span><span class="idea-to" id="ideaTo"></span></div>
+    <div class="idea-words" id="ideaWords"></div>
+    <div class="idea-acts" id="ideaActs">
+      <button class="ghost sm" type="button" id="ideaUndo">Undo</button>
+      <span class="idea-lbl">Also give it to</span>
+      <span class="idea-secs" id="ideaSecs"></span>
     </div>
   </div>
   <div class="hive" id="hive"></div>
@@ -2359,9 +2389,11 @@ function publishIdea(idea) {
   try { window.dispatchEvent(new CustomEvent("sungidea", { detail: idea })); } catch (e) {}
 }
 
-// play the sung part on whoever the words named (or whoever you're conducting)
-function playSungIdea(idea) {
-  const spoken = idea.words.filter((w) => !w.sung).map((w) => w.text).join(" ");
+// play the sung part on whoever the words named (or whoever you're conducting).
+// opts.words false skips the spoken cue, for "Also give it to" on the card.
+function playSungIdea(idea, opts) {
+  const useWords = !opts || opts.words !== false;
+  const spoken = useWords ? idea.words.filter((w) => !w.sung).map((w) => w.text).join(" ") : "";
   const cmd = spoken ? parse(spoken) : { raw: "", acts: [] };
   const keep = ["select", "dyn", "dynSet", "tempo", "tempoSet", "octave", "artic"];
   const acts = cmd.acts.filter((a) => keep.includes(a.type) || ((a.targets || a.players) && a.type !== "ideas"))
@@ -2385,8 +2417,44 @@ function playSungIdea(idea) {
   finalizePhrase();
   const sungTxt = idea.words.filter((w) => w.sung).map((w) => `“${w.text}”`).join(", ");
   const notesTxt = mel.slice(0, 6).map((n) => noteName(Math.round(n.midi))).join(" ") + (mel.length > 6 ? " …" : "");
-  flash(idea.text, `You sang ${notesTxt} on ${sungTxt}. ${$("line3").textContent}`);
+  flash(useWords ? idea.text : null, `${useWords ? "You sang" : `Gave ${targetName()}`} ${notesTxt}${useWords ? ` on ${sungTxt}` : ""}. ${$("line3").textContent}`);
+  showIdeaCard(idea, captureSection(target));
 }
+
+// the card under the readout: what you sang, where it went, and quick fixes
+let cardIdea = null, cardSecs = [];
+function showIdeaCard(idea, sec) {
+  if (cardIdea !== idea) { cardIdea = idea; cardSecs = []; }
+  if (!cardSecs.includes(sec)) cardSecs.push(sec);
+  const box = $("ideaWords"); box.innerHTML = "";
+  idea.words.forEach((w) => {
+    const el = document.createElement("span"); el.className = "w" + (w.sung ? " sung" : "");
+    const t = document.createElement("span"); t.textContent = w.text; el.appendChild(t);
+    if (w.sung && w.notes.length) {
+      const sm = document.createElement("small");
+      sm.textContent = w.notes.slice(0, 4).map((n) => n.note).join(" ") + (w.notes.length > 4 ? " …" : "");
+      el.appendChild(sm);
+    }
+    box.appendChild(el);
+  });
+  $("ideaTo").textContent = "On " + cardSecs.map((i) => SECTIONS[i].name).join(", ");
+  const row = $("ideaSecs"); row.innerHTML = "";
+  SECTIONS.forEach((sx, i) => {
+    if (cardSecs.includes(i)) return;
+    const b = document.createElement("button"); b.type = "button"; b.className = "ghost sm"; b.textContent = sx.name;
+    b.addEventListener("click", () => { try { ensureCtx(); } catch (e) {} select(i); playSungIdea(idea, { words: false }); });
+    row.appendChild(b);
+  });
+  $("ideaActs").querySelector(".idea-lbl").hidden = !row.children.length;
+  $("ideaCard").hidden = false;
+}
+$("ideaUndo").addEventListener("click", () => {
+  if (!cardSecs.length) return;
+  const i = cardSecs.pop();
+  select(i); handle("undo", "tap");
+  if (!cardSecs.length) { $("ideaCard").hidden = true; cardIdea = null; }
+  else showIdeaCard(cardIdea, cardSecs[cardSecs.length - 1]);
+});
 
 $("ideaBtn").addEventListener("click", async () => {
   const idea = window.humToPlay.lastIdea; if (!idea) return;
@@ -2847,8 +2915,11 @@ function handle(text, how) {
   const cmd = parse(text);
   if (!cmd.acts.length) {
     // not a cue the orchestra knows: questions and wishes go to Clef
-    if (/\?|\b(how|what|why|could|can|should|idea|ideas|interesting|better|cooler|boring|suggest|help)\b/i.test(text)) { openClef(text); return true; }
-    flash(text, "I didn't catch a cue. Try “cellos louder”, “second violin rest” or ask Clef.");
+    const forClef = how === "voice"
+      ? /\b(idea|ideas|interesting|boring|suggest|surprise|epic)\b/i.test(text) || (/\?\s*$/.test(text) && text.length < 90 && /^\s*(how|what|why|could|can|should)\b/i.test(text))
+      : /\?|\b(how|what|why|could|can|should|idea|ideas|interesting|better|cooler|boring|suggest|help)\b/i.test(text);
+    if (forClef) { openClef(text); return true; }
+    flash(text, how === "voice" ? "No cue in that. Try “cellos louder”, or say “violins, like this” and sing." : "I didn't catch a cue. Try “cellos louder”, “second violin rest” or ask Clef.");
     return false;
   }
   const result = apply(cmd);
@@ -3502,7 +3573,11 @@ renderReadout(true);
 requestAnimationFrame(frame);
 
 // small hook for automated checks; does nothing on its own
-window.__conductor = { buildIdea, playSungIdea, publishIdea, framesToNotes, get soundEngine() { return soundEngine; }, parse, handle, apply, SECTIONS, PLAYERS, transport, hive, select, selectPlayer, selectAll, loadDemo, B, IDEAS, localIdeas, clefAsk, openClef, finalizePhrase, startCapture, get target() { return target; }, get capture() { return capture; }, tick, ensureCtx };
+if (window.matchMedia && matchMedia("(hover: none) and (pointer: coarse)").matches) {
+  const ft = document.querySelector(".foot");
+  if (ft) ft.textContent = "Tap Listen, then hum a tune or say a cue like “cellos louder”. To hand a section your tune, say “violins, like this” and sing it.";
+}
+window.__conductor = { showIdeaCard, buildIdea, playSungIdea, publishIdea, framesToNotes, get soundEngine() { return soundEngine; }, parse, handle, apply, SECTIONS, PLAYERS, transport, hive, select, selectPlayer, selectAll, loadDemo, B, IDEAS, localIdeas, clefAsk, openClef, finalizePhrase, startCapture, get target() { return target; }, get capture() { return capture; }, tick, ensureCtx };
 
 })();
 </script>
