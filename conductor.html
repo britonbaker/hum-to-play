@@ -2531,6 +2531,8 @@ function wordChunksOk(chunks, dur) {
   return true;
 }
 function collapseRuns(text) {
+  // "blah-blah-blah-blah" is the same loop, joined with hyphens
+  text = text.replace(/\b([\w']+)(?:-\1\b){2,}/gi, "$1");
   const out = []; let run = 0;
   for (const w of text.split(" ")) {
     if (out.length && normWord(w) && normWord(w) === normWord(out[out.length - 1])) { if (++run >= 3) continue; } else run = 0;
