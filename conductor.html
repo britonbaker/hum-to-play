@@ -2011,7 +2011,7 @@ function analyse(dt) {
     utt = { t0: ctx.currentTime, frames: [], kind: smart ? "pending" : "hum", startSample: tapPos - Math.floor(ctx.sampleRate * 0.25), silent: 0 };
   }
   if (utt) {
-    utt.frames.push({ rms, zcr, voiced, midi, active, dt });
+    utt.frames.push({ rms, zcr, voiced, midi, active, dt, ct: ctx.currentTime });
     if (utt.kind === "pending") {
       const act = utt.frames.filter((f) => f.active).length * dt;
       const v = B.classifyVoice(utt.frames);
@@ -2286,10 +2286,11 @@ const median = (a) => { if (!a.length) return null; const s = a.slice().sort((x,
 
 // split a run of pitched frames into held notes
 function framesToNotes(fs) {
-  const out = []; let cur = null, pend = null, pendN = 0, lastT = -1;
+  const out = []; let cur = null, pend = null, pendN = 0, lastEnd = -1;
   for (const f of fs) {
     const m = Math.round(f.midi);
-    if (cur && f.t - lastT > 0.07) { out.push(cur); cur = null; }
+    // a real gap in the voicing ends the note; a slow frame does not
+    if (cur && f.t - lastEnd > 0.07) { out.push(cur); cur = null; }
     if (!cur) { cur = { start: f.t, end: f.t + f.dt, sum: f.midi, n: 1, m }; pend = null; pendN = 0; }
     else if (m === cur.m) { cur.end = f.t + f.dt; cur.sum += f.midi; cur.n++; pendN = 0; }
     else {
@@ -2297,7 +2298,7 @@ function framesToNotes(fs) {
       if (pendN >= 3) { out.push(cur); cur = { start: f.t, end: f.t + f.dt, sum: f.midi, n: 1, m }; pendN = 0; }
       else { cur.end = f.t + f.dt; }
     }
-    lastT = f.t;
+    lastEnd = f.t + f.dt;
   }
   if (cur) out.push(cur);
   return out.filter((n) => n.end - n.start >= 0.08).map((n) => {
@@ -2348,15 +2349,44 @@ function tagWord(w, FR, peak) {
   };
 }
 
+function untaggedTunes(FR, tagged) {
+  const inWord = (f) => tagged.some((w) => f.t + f.dt > w.start && f.t < w.end);
+  const notes = framesToNotes(FR.filter((f) => f.voiced && f.midi != null && !inWord(f)));
+  const segs = []; let cur = null;
+  for (const n of notes) {
+    if (cur && n.start - (cur.end) <= 0.4) { cur.notes.push(n); cur.end = n.start + n.dur; }
+    else { if (cur) segs.push(cur); cur = { start: n.start, end: n.start + n.dur, notes: [n] }; }
+  }
+  if (cur) segs.push(cur);
+  const peak = FR.reduce((a, f) => Math.max(a, f.rms), 1e-6);
+  return segs.filter((g) => g.notes.reduce((a, n) => a + n.dur, 0) >= 0.3).map((g) => {
+    const w = tagWord({ text: "(sung)", start: g.start, end: g.end }, FR, peak);
+    w.sung = true; w.notes = g.notes;
+    return w;
+  });
+}
+
 function buildIdea(text, chunks, frames, offset, timing) {
+  // time each frame by the audio clock, not by summed frame gaps: slow or dropped frames
+  // would otherwise squeeze the tune earlier than it was sung
   const FR = []; let t = offset;
-  for (const f of frames) { FR.push({ t, dt: f.dt, rms: f.rms, voiced: f.voiced, midi: f.midi, active: f.active }); t += f.dt; }
+  const c0 = frames.length && frames[0].ct != null ? frames[0].ct : null;
+  frames.forEach((f, i) => {
+    const nx = frames[i + 1];
+    const ft = c0 != null && f.ct != null ? offset + (f.ct - c0) : t;
+    const dt = nx && nx.ct != null && f.ct != null ? Math.min(0.1, Math.max(0.001, nx.ct - f.ct)) : f.dt;
+    FR.push({ t: ft, dt, rms: f.rms, voiced: f.voiced, midi: f.midi, active: f.active });
+    t = ft + dt;
+  });
   let words = chunks && chunks.length
     ? chunks.map((c) => ({ text: String(c.text || "").trim(), start: c.timestamp[0], end: c.timestamp[1] != null ? c.timestamp[1] : c.timestamp[0] + 0.3 })).filter((w) => w.text)
     : estimateWordTimes(text, FR);
   if (!words.length) timing = "none";
   const peak = FR.reduce((a, f) => Math.max(a, f.rms), 1e-6);
   const tagged = words.map((w) => tagWord(w, FR, peak));
+  // a tune the speech model gave no word to (after the last word, or in a long gap) still counts
+  untaggedTunes(FR, tagged).forEach((seg) => tagged.push(seg));
+  tagged.sort((x, y) => x.start - y.start);
   const melody = [];
   tagged.forEach((w) => { if (w.sung) w.notes.forEach((n) => melody.push({ note: n.note, midi: n.midi, start: n.start, dur: n.dur, word: w.text })); });
   return {
@@ -2429,7 +2459,7 @@ function showIdeaCard(idea, sec) {
   const box = $("ideaWords"); box.innerHTML = "";
   idea.words.forEach((w) => {
     const el = document.createElement("span"); el.className = "w" + (w.sung ? " sung" : "");
-    const t = document.createElement("span"); t.textContent = w.text; el.appendChild(t);
+    const t = document.createElement("span"); t.textContent = w.text === "(sung)" ? "♪ tune" : w.text; el.appendChild(t);
     if (w.sung && w.notes.length) {
       const sm = document.createElement("small");
       sm.textContent = w.notes.slice(0, 4).map((n) => n.note).join(" ") + (w.notes.length > 4 ? " …" : "");
