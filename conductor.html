@@ -2350,6 +2350,19 @@ function tagWord(w, FR, peak) {
   };
 }
 
+// the speech model marks sounds it can't put words to as [Music] or (guitar), sometimes split
+// across several word pieces; those are not words the person said
+function dropNoiseTags(chunks) {
+  let depth = 0;
+  return chunks.filter((c) => {
+    const t = String(c.text || "");
+    const opens = (t.match(/[\[(]/g) || []).length, closes = (t.match(/[\])]/g) || []).length;
+    const noise = depth > 0 || opens > 0 || closes > 0 || /♪/.test(t);
+    depth = Math.max(0, depth + opens - closes);
+    return !noise;
+  });
+}
+
 function untaggedTunes(FR, tagged) {
   const inWord = (f) => tagged.some((w) => f.t + f.dt > w.start && f.t < w.end);
   const notes = framesToNotes(FR.filter((f) => f.voiced && f.midi != null && !inWord(f)));
@@ -2360,7 +2373,8 @@ function untaggedTunes(FR, tagged) {
   }
   if (cur) segs.push(cur);
   const peak = FR.reduce((a, f) => Math.max(a, f.rms), 1e-6);
-  return segs.filter((g) => g.notes.reduce((a, n) => a + n.dur, 0) >= 0.3).map((g) => {
+  // a short pitched blip is more likely untranscribed talk than a tune
+  return segs.filter((g) => g.notes.reduce((a, n) => a + n.dur, 0) >= 0.5 && g.notes.some((n) => n.dur >= 0.3)).map((g) => {
     const w = tagWord({ text: "(sung)", start: g.start, end: g.end }, FR, peak);
     w.sung = true; w.notes = g.notes;
     return w;
@@ -2380,7 +2394,7 @@ function buildIdea(text, chunks, frames, offset, timing) {
     t = ft + dt;
   });
   let words = chunks && chunks.length
-    ? chunks.map((c) => ({ text: String(c.text || "").trim(), start: c.timestamp[0], end: c.timestamp[1] != null ? c.timestamp[1] : c.timestamp[0] + 0.3 })).filter((w) => w.text)
+    ? dropNoiseTags(chunks).map((c) => ({ text: String(c.text || "").trim(), start: c.timestamp[0], end: c.timestamp[1] != null ? c.timestamp[1] : c.timestamp[0] + 0.3 })).filter((w) => w.text)
     : estimateWordTimes(text, FR);
   if (!words.length) timing = "none";
   const peak = FR.reduce((a, f) => Math.max(a, f.rms), 1e-6);
